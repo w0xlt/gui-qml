@@ -90,3 +90,36 @@ function formatRemainingSyncTime(milliseconds) {
         };
     }
 }
+
+// Fee rate levels in sat/vB that mempool.space uses to color fee rates.
+// Theme.color.mempoolFeeColors has one color per level.
+var mempoolFeeLevels = [0, 1, 2, 3, 4, 5, 6, 8, 10, 12, 15, 20, 30, 40, 50, 60, 70, 80, 90, 100,
+                        125, 150, 175, 200, 250, 300, 350, 400, 500, 600, 700, 800, 900, 1000,
+                        1200, 1400, 1600, 1800, 2000]
+
+// Index of the highest fee level at or below feeRate.
+function mempoolFeeLevelIndex(feeRate) {
+    for (var i = mempoolFeeLevels.length - 1; i > 0; --i) {
+        if (feeRate >= mempoolFeeLevels[i]) return i
+    }
+    return 0
+}
+
+// About three significant digits: 0.12, 6.38, 77.5, 221.
+function formatFeeRate(feeRate) {
+    var decimals = feeRate >= 100 ? 0 : (feeRate >= 10 ? 1 : 2)
+    return Number(feeRate).toLocaleString(Qt.locale(), 'f', decimals)
+}
+
+// Fee totals in BTC with two or three decimals, or as many as needed below
+// 0.001 BTC.
+function formatBlockFees(satoshis) {
+    var decimals = 2
+    if (satoshis > 0 && satoshis < 100000) {
+        decimals = 8
+        while (decimals > 3 && satoshis % Math.pow(10, 9 - decimals) === 0) --decimals
+    } else if (Math.round(satoshis / 100000) % 10 !== 0) {
+        decimals = 3
+    }
+    return Number(satoshis / 100000000).toLocaleString(Qt.locale(), 'f', decimals) + " BTC"
+}

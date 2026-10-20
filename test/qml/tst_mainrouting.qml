@@ -120,6 +120,21 @@ TestCase {
         compare(menuActions.settings.enabled, true)
     }
 
+    function test_node_mode_mempool_menu_opens_mempool_view() {
+        const window = createMain(false)
+        const menuActions = findChild(window, "desktopMenuActions")
+        verify(menuActions !== null)
+        compare(findChild(window, "mempoolView"), null)
+
+        menuActions.mempool.trigger()
+        tryVerify(function() { return findChild(window, "mempoolView") !== null })
+        tryCompare(mempoolBlocksModel, "active", true)
+
+        findChild(window, "mempoolBackButton").clicked()
+        tryVerify(function() { return findChild(window, "mempoolView") === null })
+        tryCompare(mempoolBlocksModel, "active", false)
+    }
+
     function test_add_wallet_menu_command_opens_wallet_wizard() {
         const window = createMain(true)
         const menuActions = findChild(window, "desktopMenuActions")
@@ -194,15 +209,19 @@ TestCase {
         const sendTab = findChild(window, "sendTabButton")
         const receiveTab = findChild(window, "receiveTabButton")
         const nodeTab = findChild(window, "blockClockTabButton")
+        const mempoolTab = findChild(window, "mempoolTabButton")
 
         verify(menuActions !== null)
         verify(activityTab !== null)
         verify(sendTab !== null)
         verify(receiveTab !== null)
         verify(nodeTab !== null)
+        verify(mempoolTab !== null)
 
         menuActions.nodeView.trigger()
         compare(nodeTab.checked, true)
+        menuActions.mempool.trigger()
+        compare(mempoolTab.checked, true)
         menuActions.sendView.trigger()
         compare(sendTab.checked, true)
         menuActions.receiveView.trigger()

@@ -2952,6 +2952,81 @@ Q_SIGNALS:
     void reachabilityChanged();
 };
 
+class MockMempoolBlocksModel : public QAbstractListModel
+{
+    Q_OBJECT
+    Q_PROPERTY(bool active READ active WRITE setActive NOTIFY activeChanged)
+    Q_PROPERTY(bool loaded MEMBER m_loaded NOTIFY loadedChanged)
+    Q_PROPERTY(int count READ count NOTIFY countChanged)
+
+public:
+    int rowCount(const QModelIndex& parent = QModelIndex()) const override
+    {
+        return parent.isValid() ? 0 : count();
+    }
+
+    QVariant data(const QModelIndex& index, int role) const override
+    {
+        if (!index.isValid() || index.row() < 0 || index.row() >= count()) return {};
+        return m_blocks.at(index.row()).value(QString::fromUtf8(roleNames().value(role)));
+    }
+
+    QHash<int, QByteArray> roleNames() const override
+    {
+        return {
+            {Qt::UserRole + 1, "height"},
+            {Qt::UserRole + 2, "medianFeeRate"},
+            {Qt::UserRole + 3, "minFeeRate"},
+            {Qt::UserRole + 4, "maxFeeRate"},
+            {Qt::UserRole + 5, "feeRange"},
+            {Qt::UserRole + 6, "totalFees"},
+            {Qt::UserRole + 7, "transactionCount"},
+            {Qt::UserRole + 8, "vsize"},
+        };
+    }
+
+    bool active() const { return m_active; }
+    void setActive(bool active)
+    {
+        if (m_active == active) return;
+        m_active = active;
+        Q_EMIT activeChanged();
+    }
+
+    int count() const { return static_cast<int>(m_blocks.size()); }
+
+    Q_INVOKABLE void setBlocks(const QVariantList& blocks)
+    {
+        beginResetModel();
+        m_blocks.clear();
+        for (const QVariant& block : blocks) {
+            m_blocks.append(block.toMap());
+        }
+        endResetModel();
+        Q_EMIT countChanged();
+    }
+
+    Q_INVOKABLE void removeFront(int rows)
+    {
+        rows = std::min(rows, count());
+        if (rows <= 0) return;
+        beginRemoveRows({}, 0, rows - 1);
+        m_blocks.erase(m_blocks.begin(), m_blocks.begin() + rows);
+        endRemoveRows();
+        Q_EMIT countChanged();
+    }
+
+Q_SIGNALS:
+    void activeChanged();
+    void loadedChanged();
+    void countChanged();
+
+private:
+    bool m_active{false};
+    bool m_loaded{false};
+    QList<QVariantMap> m_blocks;
+};
+
 class MockPeerListModelProxy : public QAbstractListModel
 {
     Q_OBJECT
@@ -4140,6 +4215,7 @@ public Q_SLOTS:
         static MockNodeModel node_model;
         static MockPeerTableModel peer_table_model;
         static MockNetworkTrafficTower network_traffic_tower;
+        static MockMempoolBlocksModel mempool_blocks_model;
         static MockNetworkStatusModel network_status_model;
         static MockPeerListModelProxy peer_list_model_proxy;
         static MockBanListModel ban_list_model;
@@ -4213,6 +4289,7 @@ public Q_SLOTS:
         engine->rootContext()->setContextProperty(QStringLiteral("nodeModel"), &node_model);
         engine->rootContext()->setContextProperty(QStringLiteral("peerTableModel"), &peer_table_model);
         engine->rootContext()->setContextProperty(QStringLiteral("networkTrafficTower"), &network_traffic_tower);
+        engine->rootContext()->setContextProperty(QStringLiteral("mempoolBlocksModel"), &mempool_blocks_model);
         engine->rootContext()->setContextProperty(QStringLiteral("testNetworkTrafficTower"), &network_traffic_tower);
         engine->rootContext()->setContextProperty(QStringLiteral("networkStatusModel"), &network_status_model);
         engine->rootContext()->setContextProperty(QStringLiteral("peerListModelProxy"), &peer_list_model_proxy);

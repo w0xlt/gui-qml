@@ -78,6 +78,10 @@ Page {
         blockClockTabButton.checked = true
     }
 
+    function openMempool() {
+        mempoolTabButton.checked = true
+    }
+
     function openActivity() {
         activityTabButton.checked = true
     }
@@ -294,6 +298,24 @@ Page {
                 }
             }
             NavigationTab {
+                id: mempoolTabButton
+                objectName: "mempoolTabButton"
+                iconSource: "image://images/mempool"
+                iconColor: Theme.color.neutral7
+                iconSize: 24
+                Layout.preferredWidth: 30
+                property int index: 6
+                ButtonGroup.group: navigationTabs
+
+                Tooltip {
+                    anchors.top: mempoolTabButton.bottom
+                    anchors.topMargin: 8
+                    anchors.horizontalCenter: mempoolTabButton.horizontalCenter
+                    shown: mempoolTabButton.hovered
+                    text: qsTr("Mempool")
+                }
+            }
+            NavigationTab {
                 id: peersTabButton
                 objectName: "peersTabButton"
                 iconSource: Utils.nodeConnectionIcon(nodeModel.numPeers)
@@ -430,6 +452,10 @@ Page {
                     }
                 }
             }
+        }
+        MempoolView {
+            showHeader: false
+            showBackButton: false
         }
     }
 

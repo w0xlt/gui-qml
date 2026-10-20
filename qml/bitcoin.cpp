@@ -47,6 +47,7 @@
 #include <qml/models/bumptransactionmodel.h>
 #include <qml/models/chainmodel.h>
 #include <qml/models/debuglogmodel.h>
+#include <qml/models/mempoolblocksmodel.h>
 #include <qml/models/networktraffictower.h>
 #include <qml/models/networkstatusmodel.h>
 #include <qml/models/nodemodel.h>
@@ -707,6 +708,13 @@ int QmlGuiMain(int argc, char* argv[])
                      &network_traffic_tower, &NetworkTrafficTower::startSampling);
     shutdown_coordinator.addParticipant(&network_traffic_tower, &NetworkTrafficTower::drained,
                                         [&] { network_traffic_tower.beginShutdown(); });
+    MempoolBlocksModel mempool_blocks_model{*node};
+    QObject::connect(&node_model, &NodeModel::chainStateReady,
+                     &mempool_blocks_model, &MempoolBlocksModel::start);
+    QObject::connect(&node_model, &NodeModel::blockTipHeightChanged,
+                     &mempool_blocks_model, &MempoolBlocksModel::refresh);
+    shutdown_coordinator.addParticipant(&mempool_blocks_model, &MempoolBlocksModel::drained,
+                                        [&] { mempool_blocks_model.beginShutdown(); });
     NetworkStatusModel network_status_model;
 #ifdef __ANDROID__
     AndroidNotifier android_notifier{node_model};
@@ -760,6 +768,7 @@ int QmlGuiMain(int argc, char* argv[])
     engine->addImageProvider(QStringLiteral("qr"), new QRImageProvider);
 
     engine->rootContext()->setContextProperty("networkTrafficTower", &network_traffic_tower);
+    engine->rootContext()->setContextProperty("mempoolBlocksModel", &mempool_blocks_model);
     engine->rootContext()->setContextProperty("networkStatusModel", &network_status_model);
     engine->rootContext()->setContextProperty("nodeModel", &node_model);
     engine->rootContext()->setContextProperty("chainModel", &chain_model);

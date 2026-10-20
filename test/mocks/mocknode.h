@@ -111,6 +111,7 @@ public:
     std::function<bool()> get_network_active_fn;
     std::function<CFeeRate()> get_dust_relay_fee_fn;
     std::function<node::TransactionError(CTransactionRef, CAmount, std::string&)> broadcast_transaction_fn;
+    std::function<UniValue(const std::string&, const UniValue&, const std::string&)> execute_rpc_fn;
     std::function<interfaces::WalletLoader&()> wallet_loader_fn;
     std::function<std::unique_ptr<interfaces::Handler>(MessageBoxFn)> handle_message_box_fn;
     std::function<std::unique_ptr<interfaces::Handler>(QuestionFn)> handle_question_fn;
@@ -152,6 +153,7 @@ public:
         CallCounter getNetworkActive{"getNetworkActive"};
         CallCounter getDustRelayFee{"getDustRelayFee"};
         CallCounter broadcastTransaction{"broadcastTransaction"};
+        CallCounter executeRpc{"executeRpc"};
         CallCounter walletLoader{"walletLoader"};
         CallCounter handleMessageBox{"handleMessageBox"};
         CallCounter handleQuestion{"handleQuestion"};
@@ -209,6 +211,7 @@ public:
     bool getNetworkActive() override { return Invoke(calls.getNetworkActive, get_network_active_fn, false); }
     CFeeRate getDustRelayFee() override { return Invoke(calls.getDustRelayFee, get_dust_relay_fee_fn, CFeeRate{}); }
     node::TransactionError broadcastTransaction(CTransactionRef tx, CAmount max_tx_fee, std::string& err_string) override { return Invoke(calls.broadcastTransaction, broadcast_transaction_fn, node::TransactionError{}, std::move(tx), max_tx_fee, err_string); }
+    UniValue executeRpc(const std::string& command, const UniValue& params, const std::string& uri) override { return Invoke(calls.executeRpc, execute_rpc_fn, UniValue{}, command, params, uri); }
     interfaces::WalletLoader& walletLoader() override
     {
         ++calls.walletLoader;

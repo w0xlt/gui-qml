@@ -12,6 +12,7 @@
 #include <qml/models/banlistmodel.h>
 #include <qml/models/blockclockmodel.h>
 #include <qml/models/debuglogmodel.h>
+#include <qml/models/mempoolblocksmodel.h>
 #include <qml/models/networktraffictower.h>
 #include <qml/models/nodemodel.h>
 #include <qml/models/peerlistmodel.h>
@@ -39,7 +40,7 @@ private Q_SLOTS:
     {
         QTest::addColumn<int>("producer");
         QTest::addColumn<bool>("destroy_owner_before_join_completion");
-        for (int producer = 0; producer < 4; ++producer) {
+        for (int producer = 0; producer < 5; ++producer) {
             for (bool destroy_owner_before_join_completion : {false, true}) {
                 const QByteArray name = QByteArray::number(producer) + (destroy_owner_before_join_completion ? "-deleted" : "-drained");
                 QTest::newRow(name.constData()) << producer << destroy_owner_before_join_completion;
@@ -80,6 +81,12 @@ private Q_SLOTS:
             auto* instance = new DebugLogModel(fs::PathFromString(directory.filePath("debug.log").toStdString()));
             model.reset(instance);
             stop = [instance] { instance->stop(); };
+            break;
+        }
+        case 4: {
+            auto* instance = new MempoolBlocksModel(node);
+            model.reset(instance);
+            stop = [instance] { instance->beginShutdown(); };
             break;
         }
         }

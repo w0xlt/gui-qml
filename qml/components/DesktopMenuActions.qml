@@ -56,6 +56,7 @@ QtObject {
     signal consoleRequested()
     signal networkTrafficRequested()
     signal peersRequested()
+    signal mempoolRequested()
     signal rpcDocumentationRequested()
     signal aboutRequested()
 
@@ -212,6 +213,11 @@ QtObject {
         shortcut: qsTr("Ctrl+P")
         enabled: root.routeEnabled
         onTriggered: root.peersRequested()
+    }
+    readonly property MenuCommand mempool: MenuCommand {
+        text: qsTr("Mempool")
+        enabled: root.routeEnabled
+        onTriggered: root.mempoolRequested()
     }
 
     readonly property MenuCommand rpcDocumentation: MenuCommand {

@@ -211,6 +211,12 @@ Platform.MenuBar {
             shortcut: root.actions.peers.shortcut
             onTriggered: root.actions.peers.trigger()
         }
+        Platform.MenuItem {
+            objectName: "menuMempool"
+            text: root.actions.mempool.text
+            enabled: root.actions.mempool.enabled
+            onTriggered: root.actions.mempool.trigger()
+        }
         Platform.MenuSeparator {
             objectName: "viewTrailingSeparator"
         }

@@ -12,6 +12,7 @@ import "../../components"
 Page {
     signal settingsClicked
     signal peersClicked
+    signal mempoolClicked
     id: root
     objectName: "nodeRunner"
     background: null
@@ -31,6 +32,16 @@ Page {
 
                 NodeStatusActions {
                     Layout.alignment: Qt.AlignVCenter
+                }
+                IconButton {
+                    objectName: "mempoolButton"
+                    iconSource: "image://images/mempool"
+                    iconColor: Theme.color.neutral7
+                    hoverColor: Theme.color.neutral9
+                    size: 34
+                    iconSize: 24
+                    Layout.alignment: Qt.AlignVCenter
+                    onClicked: root.mempoolClicked()
                 }
                 IconButton {
                     objectName: "peersTabButton"

@@ -9,6 +9,14 @@ Control {
     readonly property ColorSet color: dark ? darkColorSet : lightColorSet
     readonly property ImageSet image: dark ? darkImageSet : lightImageSet
     readonly property TextSet text: TextSet {}
+    // mempool.space fee rate colors, one per level in Utils.mempoolFeeLevels.
+    readonly property var mempoolFeeColors: [
+        "#007D3D", "#557D00", "#5D7D01", "#637D02", "#6D7D04", "#757D05", "#7D7D06", "#867D08",
+        "#8C7D09", "#957D0B", "#9B7D0C", "#A67D0E", "#AA7D0F", "#B27D10", "#BB7D11", "#BF7D12",
+        "#BF7815", "#BF7319", "#BE6C1E", "#BE6820", "#BD6125", "#BD5C28", "#BC552D", "#BC4F30",
+        "#BC4A34", "#BB4339", "#BB3D3C", "#BB373F", "#BA3243", "#B92B48", "#B9254B", "#B8214D",
+        "#B71D4F", "#B61951", "#B41453", "#B30E55", "#B10857", "#B00259", "#AE005B",
+    ]
 
     AppSettings {
         id: settings
@@ -43,6 +51,11 @@ Control {
         required property var primaryButtonBorderGradient
         required property var destructiveButtonBorderGradient
         required property var confirmationColors
+        required property color mempoolBlockTop
+        required property color mempoolBlockSide
+        required property color mempoolBlockEmpty
+        required property color mempoolBlockFeeRange
+        required property var mempoolFeeColors
     }
 
     component ImageSet: QtObject {
@@ -103,6 +116,11 @@ Control {
             "#F0BB49",
             "#F1D54A", // yellow
         ]
+        mempoolBlockTop: "#403834"
+        mempoolBlockSide: "#2D2825"
+        mempoolBlockEmpty: "#554B45"
+        mempoolBlockFeeRange: "#FFF000"
+        mempoolFeeColors: root.mempoolFeeColors
     }
 
     ColorSet {
@@ -140,6 +158,11 @@ Control {
             "#F0BB49",
             "#F1D54A", // yellow
         ]
+        mempoolBlockTop: "#D9DDE1"
+        mempoolBlockSide: "#C8CDD3"
+        mempoolBlockEmpty: "#8E969F"
+        mempoolBlockFeeRange: "#FFF000"
+        mempoolFeeColors: root.mempoolFeeColors
     }
 
     ImageSet {

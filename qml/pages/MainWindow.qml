@@ -213,6 +213,7 @@ ApplicationWindow {
         onConsoleRequested: appWindow.routeToShell("openConsole")
         onNetworkTrafficRequested: appWindow.routeToShell("openNetworkTraffic")
         onPeersRequested: appWindow.routeToShell("openPeers")
+        onMempoolRequested: appWindow.routeToShell("openMempool")
         onRpcDocumentationRequested: Qt.openUrlExternally("https://bitcoincore.org/en/doc/")
         onAboutRequested: appWindow.openSettings("about")
     }
@@ -431,6 +432,11 @@ ApplicationWindow {
             function openNetworkTraffic() {
                 nodeStack.openSettings("network-traffic")
             }
+
+            function openMempool() {
+                nodeStack.resetToRoot()
+                nodeStack.push(mempoolPage, {}, StackView.Immediate)
+            }
             Component {
                 id: node
                 NodeRunner {
@@ -441,12 +447,19 @@ ApplicationWindow {
                         peerTableModel.startAutoRefresh()
                         nodeStack.push(peersPage)
                     }
+                    onMempoolClicked: nodeStack.push(mempoolPage)
                 }
             }
             Component {
                 id: settingsPage
                 SettingsView {
                     onDoneClicked: nodeStack.pop()
+                }
+            }
+            Component {
+                id: mempoolPage
+                MempoolView {
+                    onBack: nodeStack.pop()
                 }
             }
             Component {

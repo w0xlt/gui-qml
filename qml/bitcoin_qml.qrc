@@ -17,6 +17,8 @@
         <file>components/DebugLogTitlesHeader.qml</file>
         <file>components/DesktopMenuActions.qml</file>
         <file>components/DesktopNativeMenuBar.qml</file>
+        <file>components/MempoolBlock.qml</file>
+        <file>components/MempoolBlocksStrip.qml</file>
         <file>components/MempoolInformationRows.qml</file>
         <file>components/MenuCommand.qml</file>
         <file>components/DeveloperOptions.qml</file>
@@ -167,6 +169,7 @@
         <file>pages/MainWindow.qml</file>
         <file>pages/preinit.qml</file>
         <file>pages/node/CommandConsole.qml</file>
+        <file>pages/node/MempoolView.qml</file>
         <file>pages/node/NetworkTraffic.qml</file>
         <file>pages/node/NodeRunner.qml</file>
         <file>pages/node/Peers.qml</file>
@@ -298,6 +301,7 @@
         <file alias="key">res/icons/key.png</file>
         <file alias="key-filled">res/icons/key-filled.png</file>
         <file alias="lock">res/icons/lock.png</file>
+        <file alias="mempool">res/icons/mempool.png</file>
         <file alias="minus">res/icons/minus.png</file>
         <file alias="network-dark">res/icons/network-dark.png</file>
         <file alias="node-0-connections">res/icons/node-0-connections.png</file>
