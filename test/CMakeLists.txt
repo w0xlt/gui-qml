@@ -32,6 +32,7 @@ add_executable(bitcoinqml_unit_tests
   test_desktoptrayiconcontroller.cpp
   test_desktopwindowbehaviormodel.cpp
   test_peerlistmodel.cpp
+  test_recentreplacementsmodel.cpp
   test_peerstatsutil.cpp
   test_psbtqmlmodel.cpp
   test_walletqmlmodel.cpp

@@ -3065,6 +3065,54 @@ private:
     qint64 m_recording_since{0};
 };
 
+class MockRecentReplacementsModel : public QAbstractListModel
+{
+    Q_OBJECT
+    Q_PROPERTY(int count READ count NOTIFY countChanged)
+
+public:
+    int rowCount(const QModelIndex& parent = QModelIndex()) const override
+    {
+        return parent.isValid() ? 0 : count();
+    }
+
+    QVariant data(const QModelIndex& index, int role) const override
+    {
+        if (!index.isValid() || index.row() < 0 || index.row() >= count()) return {};
+        return m_replacements.at(index.row()).value(QString::fromUtf8(roleNames().value(role)));
+    }
+
+    QHash<int, QByteArray> roleNames() const override
+    {
+        return {
+            {Qt::UserRole + 1, "txid"},
+            {Qt::UserRole + 2, "oldFeeRate"},
+            {Qt::UserRole + 3, "newFeeRate"},
+            {Qt::UserRole + 4, "fullRbf"},
+            {Qt::UserRole + 5, "mined"},
+        };
+    }
+
+    int count() const { return static_cast<int>(m_replacements.size()); }
+
+    Q_INVOKABLE void setReplacements(const QVariantList& replacements)
+    {
+        beginResetModel();
+        m_replacements.clear();
+        for (const QVariant& replacement : replacements) {
+            m_replacements.append(replacement.toMap());
+        }
+        endResetModel();
+        Q_EMIT countChanged();
+    }
+
+Q_SIGNALS:
+    void countChanged();
+
+private:
+    QList<QVariantMap> m_replacements;
+};
+
 class MockPeerListModelProxy : public QAbstractListModel
 {
     Q_OBJECT
@@ -4256,6 +4304,7 @@ public Q_SLOTS:
         static MockMempoolBlocksModel mempool_blocks_model;
         static MockMempoolBlocksModel mined_blocks_model;
         static MockIncomingTransactionsModel incoming_transactions_model;
+        static MockRecentReplacementsModel recent_replacements_model;
         static MockNetworkStatusModel network_status_model;
         static MockPeerListModelProxy peer_list_model_proxy;
         static MockBanListModel ban_list_model;
@@ -4333,6 +4382,7 @@ public Q_SLOTS:
         engine->rootContext()->setContextProperty(QStringLiteral("mempoolBlocksModel"), &mempool_blocks_model);
         engine->rootContext()->setContextProperty(QStringLiteral("minedBlocksModel"), &mined_blocks_model);
         engine->rootContext()->setContextProperty(QStringLiteral("incomingTransactionsModel"), &incoming_transactions_model);
+        engine->rootContext()->setContextProperty(QStringLiteral("recentReplacementsModel"), &recent_replacements_model);
         engine->rootContext()->setContextProperty(QStringLiteral("testNetworkTrafficTower"), &network_traffic_tower);
         engine->rootContext()->setContextProperty(QStringLiteral("networkStatusModel"), &network_status_model);
         engine->rootContext()->setContextProperty(QStringLiteral("peerListModelProxy"), &peer_list_model_proxy);

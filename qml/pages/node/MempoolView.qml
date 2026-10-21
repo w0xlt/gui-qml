@@ -158,6 +158,15 @@ Page {
                     rates: incomingTransactionsModel.rates
                     recordingSince: incomingTransactionsModel.recordingSince
                 }
+
+                MempoolReplacementsBox {
+                    objectName: "mempoolReplacementsBox"
+                    Layout.columnSpan: cards.columns
+                    Layout.fillWidth: true
+                    Layout.maximumWidth: 600
+                    Layout.alignment: Qt.AlignHCenter | Qt.AlignTop
+                    model: recentReplacementsModel
+                }
             }
         }
     }

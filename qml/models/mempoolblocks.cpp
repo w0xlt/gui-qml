@@ -225,6 +225,17 @@ double OptimizeMedianFee(const ProjectedBlock& block, bool has_next_block, std::
 }
 } // namespace
 
+std::optional<CAmount> FeeFromCoins(const CTransaction& tx, const std::map<COutPoint, Coin>& coins)
+{
+    CAmount in{0};
+    for (const CTxIn& input : tx.vin) {
+        const auto coin{coins.find(input.prevout)};
+        if (coin == coins.end() || coin->second.IsSpent()) return std::nullopt;
+        in += coin->second.out.nValue;
+    }
+    return in - tx.GetValueOut();
+}
+
 std::vector<MempoolTx> ParseRawMempool(const UniValue& verbose_mempool)
 {
     const std::vector<std::string>& txids{verbose_mempool.get_obj().getKeys()};

@@ -59,6 +59,7 @@
 #include <qml/models/options_model.h>
 #include <qml/models/paymentrequest.h>
 #include <qml/models/peerdetailsmodel.h>
+#include <qml/models/recentreplacementsmodel.h>
 #include <qml/models/peerlistsortproxy.h>
 #include <qml/models/peerlistmodel.h>
 #include <qml/models/rpcconsolemodel.h>
@@ -728,6 +729,15 @@ int QmlGuiMain(int argc, char* argv[])
                      &incoming_transactions_model, &IncomingTransactionsModel::start);
     shutdown_coordinator.addParticipant(&incoming_transactions_model, &IncomingTransactionsModel::drained,
                                         [&] { incoming_transactions_model.beginShutdown(); });
+    RecentReplacementsModel recent_replacements_model{
+        [chain = chain.get()](std::shared_ptr<interfaces::Chain::Notifications> notifications) {
+            return chain->handleNotifications(std::move(notifications));
+        },
+        [chain = chain.get()](std::map<COutPoint, Coin>& coins) { chain->findCoins(coins); }};
+    QObject::connect(&node_model, &NodeModel::chainStateReady,
+                     &recent_replacements_model, &RecentReplacementsModel::start);
+    shutdown_coordinator.addParticipant(&recent_replacements_model, &RecentReplacementsModel::drained,
+                                        [&] { recent_replacements_model.beginShutdown(); });
     NetworkStatusModel network_status_model;
 #ifdef __ANDROID__
     AndroidNotifier android_notifier{node_model};
@@ -784,6 +794,7 @@ int QmlGuiMain(int argc, char* argv[])
     engine->rootContext()->setContextProperty("mempoolBlocksModel", &mempool_blocks_model);
     engine->rootContext()->setContextProperty("minedBlocksModel", mempool_blocks_model.minedBlocks());
     engine->rootContext()->setContextProperty("incomingTransactionsModel", &incoming_transactions_model);
+    engine->rootContext()->setContextProperty("recentReplacementsModel", &recent_replacements_model);
     engine->rootContext()->setContextProperty("networkStatusModel", &network_status_model);
     engine->rootContext()->setContextProperty("nodeModel", &node_model);
     engine->rootContext()->setContextProperty("chainModel", &chain_model);

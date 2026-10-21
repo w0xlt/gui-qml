@@ -5,10 +5,14 @@
 #ifndef BITCOIN_QML_MODELS_MEMPOOLBLOCKS_H
 #define BITCOIN_QML_MODELS_MEMPOOLBLOCKS_H
 
+#include <coins.h>
 #include <consensus/amount.h>
+#include <primitives/transaction.h>
 
 #include <cstddef>
 #include <cstdint>
+#include <map>
+#include <optional>
 #include <string>
 #include <vector>
 
@@ -99,6 +103,10 @@ struct MempoolInfo {
 
 //! Statistics that ParseBlockStats() reads, to pass to `getblockstats`.
 std::vector<std::string> BlockStatsFields();
+
+//! Fee of tx from the coins it spends, as Chain::findCoins() fills them in,
+//! or nullopt if one is missing.
+std::optional<CAmount> FeeFromCoins(const CTransaction& tx, const std::map<COutPoint, Coin>& coins);
 
 //! Parse the result of `getrawmempool true`. Throws std::runtime_error or
 //! std::exception subclasses on malformed input.

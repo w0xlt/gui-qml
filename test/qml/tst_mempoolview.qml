@@ -5,6 +5,7 @@
 import QtQuick 2.15
 import QtQuick.Controls 2.15
 import QtTest 1.2
+import org.bitcoincore.qt 1.0
 import "../../qml/controls"
 import "../../qml/controls/utils.js" as Utils
 import "../../qml/pages/node"
@@ -127,6 +128,7 @@ TestCase {
         incomingTransactionsModel.recordingSince = 0
         incomingTransactionsModel.times = []
         incomingTransactionsModel.rates = []
+        recentReplacementsModel.setReplacements([])
         mempoolBlocksModel.loaded = false
         mempoolBlocksModel.active = false
         nodeModel.mempoolInformationAvailable = true
@@ -421,6 +423,7 @@ TestCase {
         compare(findChild(view, "mempoolFeesBox").visible, false)
         compare(findChild(view, "mempoolDifficultyBox").visible, false)
         compare(findChild(view, "mempoolIncomingBox").visible, false)
+        compare(findChild(view, "mempoolReplacementsBox").visible, false)
         compare(mempoolBlocksModel.active, false)
         compare(findChild(view, "mempoolSyncNote").visible, false)
         verify(findChild(view, "mempoolDescription").text.indexOf("not available") >= 0)
@@ -730,6 +733,71 @@ TestCase {
         verify(message.text.indexOf("saved mempool") >= 0)
         incomingTransactionsModel.recordingSince = estimatesTime
         verify(message.text.indexOf("after a minute") >= 0)
+    }
+
+    readonly property string replacedTxid: "4c2b1fd6a87a0c3b2a6f1d0e9c8b7a69584736251403f2e1d0c9b8a7f6e5d4c3"
+
+    function replacementRows(view) {
+        const box = findChild(view, "mempoolReplacementsBox")
+        const rows = []
+        const collect = function(item) {
+            for (let i = 0; i < item.children.length; ++i) {
+                const child = item.children[i]
+                if (child.objectName === "mempoolReplacement") rows.push(child)
+                else collect(child)
+            }
+        }
+        collect(box)
+        return rows
+    }
+
+    function badges(row) {
+        const labels = []
+        const collect = function(item) {
+            for (let i = 0; i < item.children.length; ++i) {
+                const child = item.children[i]
+                if (child.objectName === "mempoolReplacementBadge") labels.push(child.label)
+                else collect(child)
+            }
+        }
+        collect(row)
+        return labels
+    }
+
+    function test_replacements_show_fee_rates_and_status() {
+        recentReplacementsModel.setReplacements([
+            { txid: replacedTxid, oldFeeRate: 1.5, newFeeRate: 12.25, fullRbf: true, mined: true },
+            { txid: "aa".repeat(32), oldFeeRate: -1, newFeeRate: 3, fullRbf: false, mined: false },
+        ])
+        const view = createView()
+        compare(findChild(view, "mempoolReplacementsEmpty").visible, false)
+        const rows = replacementRows(view)
+        compare(rows.length, 2)
+        compare(findChild(rows[0], "mempoolReplacementTxid").text, replacedTxid)
+        compare(findChild(rows[0], "mempoolReplacementOldFee").text, Utils.formatFeeRate(1.5) + " sat/vB")
+        compare(findChild(rows[0], "mempoolReplacementNewFee").text, Utils.formatFeeRate(12.25) + " sat/vB")
+        compare(badges(rows[0]), ["Mined", "Full RBF"])
+        // The fee of a replaced transaction is unknown when a coin it spent is gone.
+        compare(findChild(rows[1], "mempoolReplacementOldFee").text, "–")
+        compare(badges(rows[1]), ["RBF"])
+    }
+
+    function test_clicking_a_replacement_copies_its_txid() {
+        recentReplacementsModel.setReplacements([
+            { txid: replacedTxid, oldFeeRate: 1.5, newFeeRate: 12.25, fullRbf: true, mined: false },
+        ])
+        const view = createView()
+        const scroll = findChild(view, "mempoolScroll")
+        scroll.contentY = scroll.contentHeight - scroll.height
+        const txid = findChild(replacementRows(view)[0], "mempoolReplacementTxid")
+        mouseClick(txid)
+        tryCompare(Clipboard, "currentText", replacedTxid)
+    }
+
+    function test_no_replacements_yet() {
+        const view = createView()
+        verify(findChild(view, "mempoolReplacementsEmpty").visible)
+        compare(replacementRows(view).length, 0)
     }
 
     function test_sync_note_while_syncing() {

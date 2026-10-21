@@ -6,12 +6,17 @@
 
 #include <test/qt_test_registry.h>
 
+#include <coins.h>
 #include <core_io.h>
+#include <primitives/transaction.h>
 #include <qml/models/mempoolblocks.h>
+#include <script/script.h>
 #include <univalue.h>
 
 #include <algorithm>
 #include <cmath>
+#include <map>
+#include <optional>
 #include <stdexcept>
 #include <string>
 #include <vector>
@@ -113,6 +118,7 @@ private Q_SLOTS:
     void parsesBlockStats();
     void rejectsMalformedBlockStats();
     void parsesMempoolInfo();
+    void feeComesFromTheSpentCoins();
     void recommendsFeesLikeMempoolSpace();
 };
 
@@ -317,6 +323,26 @@ void MempoolBlocksTests::parsesMempoolInfo()
         threw = true;
     }
     QVERIFY(threw);
+}
+
+void MempoolBlocksTests::feeComesFromTheSpentCoins()
+{
+    std::map<COutPoint, Coin> coins;
+    const COutPoint first{Txid::FromUint256(uint256::ONE), 0};
+    const COutPoint second{Txid::FromUint256(uint256::ONE), 1};
+    coins.emplace(first, Coin{CTxOut{60'000, CScript{}}, /*nHeightIn=*/100, /*fCoinBaseIn=*/false});
+    coins.emplace(second, Coin{CTxOut{40'000, CScript{}}, /*nHeightIn=*/100, /*fCoinBaseIn=*/false});
+    CMutableTransaction tx;
+    tx.vin.emplace_back(first);
+    tx.vin.emplace_back(second);
+    tx.vout.emplace_back(97'000, CScript{});
+    QCOMPARE(mempool_blocks::FeeFromCoins(CTransaction{tx}, coins), std::optional<CAmount>{3'000});
+
+    // Chain::findCoins() clears the coins it can't find.
+    coins[second].Clear();
+    QCOMPARE(mempool_blocks::FeeFromCoins(CTransaction{tx}, coins), std::nullopt);
+    coins.erase(second);
+    QCOMPARE(mempool_blocks::FeeFromCoins(CTransaction{tx}, coins), std::nullopt);
 }
 
 void MempoolBlocksTests::recommendsFeesLikeMempoolSpace()
