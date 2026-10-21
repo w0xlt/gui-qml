@@ -7,14 +7,17 @@
 #include <test/mocks/mocknode.h>
 #include <test/qt_test_registry.h>
 
+#include <coins.h>
 #include <interfaces/handler.h>
 #include <policy/policy.h>
 #include <primitives/transaction.h>
 #include <qml/models/incomingtransactionsmodel.h>
+#include <script/script.h>
 #include <univalue.h>
 #include <util/time.h>
 
 #include <atomic>
+#include <map>
 #include <memory>
 #include <string>
 
@@ -31,7 +34,16 @@ CTransactionRef Tx(int outputs)
 {
     CMutableTransaction tx;
     tx.vin.resize(1);
-    tx.vout.resize(outputs);
+    // Mempool transactions only have outputs in range.
+    tx.vout.resize(outputs, CTxOut{1'000, CScript{} << OP_TRUE});
+    return MakeTransactionRef(std::move(tx));
+}
+
+CTransactionRef Spend(const COutPoint& coin, CAmount value)
+{
+    CMutableTransaction tx;
+    tx.vin.emplace_back(coin);
+    tx.vout.emplace_back(value, CScript{} << OP_TRUE);
     return MakeTransactionRef(std::move(tx));
 }
 
@@ -41,6 +53,15 @@ struct LoadingNode {
     std::atomic<bool> loaded{false};
     std::atomic<bool> waited{false};
     std::shared_ptr<interfaces::Chain::Notifications> notifications;
+    //! Coins the node can find, set up before transactions spend them.
+    std::map<COutPoint, Coin> coins;
+
+    COutPoint fund(CAmount value)
+    {
+        const COutPoint outpoint{Txid::FromUint256(uint256{static_cast<uint8_t>(coins.size() + 1)}), 0};
+        coins.emplace(outpoint, Coin{CTxOut{value, CScript{} << OP_TRUE}, /*nHeightIn=*/100, /*fCoinBaseIn=*/false});
+        return outpoint;
+    }
 
     LoadingNode()
     {
@@ -61,6 +82,16 @@ struct LoadingNode {
                 return interfaces::MakeCleanupHandler([] {});
             },
             [this] { waited = true; },
+            [this](std::map<COutPoint, Coin>& lookup) {
+                for (auto& [outpoint, coin] : lookup) {
+                    const auto found{coins.find(outpoint)};
+                    if (found == coins.end()) {
+                        coin.Clear();
+                    } else {
+                        coin = found->second;
+                    }
+                }
+            },
             TEST_SAMPLE_INTERVAL_MS);
     }
 };
@@ -77,6 +108,7 @@ private Q_SLOTS:
     void keepsTwoHoursOfSamples();
     void countsOnlyAfterTheSavedMempoolLoads();
     void shutsDownWhileTheMempoolLoads();
+    void listsTheLatestTransactions();
 };
 
 void IncomingTransactionsModelTests::averagesTheLast150Seconds()
@@ -162,6 +194,48 @@ void IncomingTransactionsModelTests::shutsDownWhileTheMempoolLoads()
     loading.loaded = true;
     QTest::qWait(TEST_SAMPLE_INTERVAL_MS * 5);
     QCOMPARE(model->recordingSince(), qint64{0});
+}
+
+void IncomingTransactionsModelTests::listsTheLatestTransactions()
+{
+    LoadingNode loading;
+    // Set up the coins before the worker starts looking them up.
+    std::vector<COutPoint> funded;
+    for (int i = 0; i < 9; ++i) funded.push_back(loading.fund(100'000));
+    auto model{loading.model()};
+    RecentTransactionsModel& recent{*model->recentTransactions()};
+    model->start();
+
+    // From the saved mempool.
+    loading.notifications->transactionAddedToMempool(Spend(funded[0], 99'000));
+    loading.loaded = true;
+    QTRY_VERIFY_WITH_TIMEOUT(model->recordingSince() > 0, ASYNC_TIMEOUT_MS * 3);
+
+    const CTransactionRef first{Spend(funded[1], 97'000)};
+    loading.notifications->transactionAddedToMempool(first);
+    QTRY_COMPARE_WITH_TIMEOUT(recent.count(), 1, ASYNC_TIMEOUT_MS);
+    const QModelIndex row{recent.index(0)};
+    QCOMPARE(recent.data(row, RecentTransactionsModel::TxidRole).toString(), QString::fromStdString(first->GetHash().ToString()));
+    QCOMPARE(recent.data(row, RecentTransactionsModel::ValueRole).toLongLong(), qint64{97'000});
+    QCOMPARE(recent.data(row, RecentTransactionsModel::FeeRateRole).toDouble(), 3'000.0 / GetVirtualTransactionSize(*first));
+
+    // The newest come first, and only six are kept.
+    std::vector<CTransactionRef> sent{first};
+    for (size_t i = 2; i < funded.size(); ++i) {
+        sent.push_back(Spend(funded[i], 90'000));
+        loading.notifications->transactionAddedToMempool(sent.back());
+    }
+    // A coin the node can't find leaves the fee unknown.
+    const CTransactionRef unknown{Spend(COutPoint{Txid::FromUint256(uint256::ONE), 7}, 1'000)};
+    loading.notifications->transactionAddedToMempool(unknown);
+    QTRY_COMPARE_WITH_TIMEOUT(recent.data(recent.index(0), RecentTransactionsModel::TxidRole).toString(),
+                              QString::fromStdString(unknown->GetHash().ToString()), ASYNC_TIMEOUT_MS * 3);
+    QCOMPARE(recent.count(), 6);
+    QCOMPARE(recent.data(recent.index(0), RecentTransactionsModel::FeeRateRole).toDouble(), -1.0);
+    QCOMPARE(recent.data(recent.index(1), RecentTransactionsModel::TxidRole).toString(),
+             QString::fromStdString(sent.back()->GetHash().ToString()));
+    QCOMPARE(recent.data(recent.index(1), RecentTransactionsModel::FeeRateRole).toDouble(),
+             10'000.0 / GetVirtualTransactionSize(*sent.back()));
 }
 
 #ifdef BITCOINQML_NO_TEST_MAIN

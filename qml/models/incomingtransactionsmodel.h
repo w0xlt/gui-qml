@@ -5,9 +5,13 @@
 #ifndef BITCOIN_QML_MODELS_INCOMINGTRANSACTIONSMODEL_H
 #define BITCOIN_QML_MODELS_INCOMINGTRANSACTIONSMODEL_H
 
+#include <coins.h>
+#include <consensus/amount.h>
 #include <interfaces/chain.h>
 #include <interfaces/handler.h>
+#include <primitives/transaction.h>
 
+#include <QAbstractListModel>
 #include <QList>
 #include <QObject>
 
@@ -15,8 +19,11 @@
 #include <cstdint>
 #include <deque>
 #include <functional>
+#include <map>
 #include <memory>
+#include <optional>
 #include <utility>
+#include <vector>
 
 namespace interfaces {
 class Node;
@@ -31,6 +38,8 @@ namespace incoming_transactions {
 static constexpr int64_t WINDOW_SECONDS{150};
 //! Two hours of samples, one a minute.
 static constexpr size_t MAX_SAMPLES{120};
+//! Latest transactions listed, like mempool.space's dashboard.
+static constexpr size_t MAX_RECENT_TRANSACTIONS{6};
 
 struct Sample {
     //! In seconds since the epoch.
@@ -60,11 +69,51 @@ private:
     std::deque<Sample> m_samples;
 };
 
+struct RecentTransaction {
+    Txid txid;
+    //! Total of the outputs.
+    CAmount value{0};
+    //! Unknown when a coin it spends can no longer be found.
+    std::optional<CAmount> fee;
+    int64_t vsize{0};
+};
+
 } // namespace incoming_transactions
 
+//! The latest transactions that entered the mempool, newest first.
+class RecentTransactionsModel : public QAbstractListModel
+{
+    Q_OBJECT
+    Q_PROPERTY(int count READ count NOTIFY countChanged)
+
+public:
+    enum Roles {
+        TxidRole = Qt::UserRole + 1,
+        //! In satoshis.
+        ValueRole,
+        //! In sat/vB, or -1 when unknown.
+        FeeRateRole,
+    };
+
+    using QAbstractListModel::QAbstractListModel;
+
+    int rowCount(const QModelIndex& parent = QModelIndex()) const override;
+    QVariant data(const QModelIndex& index, int role = Qt::DisplayRole) const override;
+    QHash<int, QByteArray> roleNames() const override;
+    int count() const { return static_cast<int>(m_transactions.size()); }
+
+    void setTransactions(std::vector<incoming_transactions::RecentTransaction> transactions);
+
+Q_SIGNALS:
+    void countChanged();
+
+private:
+    std::vector<incoming_transactions::RecentTransaction> m_transactions;
+};
+
 //! Rate at which transactions enter the node's mempool, recorded from when
-//! the node started. The mempool saved at the last shutdown is loaded again
-//! at startup, and isn't counted.
+//! the node started, and the latest of them. The mempool saved at the last
+//! shutdown is loaded again at startup, and isn't counted.
 class IncomingTransactionsModel : public QObject
 {
     Q_OBJECT
@@ -80,15 +129,19 @@ public:
     using HandleNotificationsFn = std::function<std::unique_ptr<interfaces::Handler>(std::shared_ptr<interfaces::Chain::Notifications>)>;
     //! Waits until the notifications queued so far are delivered.
     using WaitForNotificationsFn = std::function<void()>;
+    //! Chain::findCoins(): fills in the coins, from the UTXO set or the
+    //! mempool, and clears the ones it can't find.
+    using FindCoinsFn = std::function<void(std::map<COutPoint, Coin>&)>;
 
     IncomingTransactionsModel(interfaces::Node& node, HandleNotificationsFn handle_notifications,
-                              WaitForNotificationsFn wait_for_notifications, int sample_interval_ms = 60'000,
-                              QObject* parent = nullptr);
+                              WaitForNotificationsFn wait_for_notifications, FindCoinsFn find_coins,
+                              int sample_interval_ms = 60'000, QObject* parent = nullptr);
     ~IncomingTransactionsModel() override;
 
     QList<qreal> times() const { return m_times; }
     QList<qreal> rates() const { return m_rates; }
     qint64 recordingSince() const { return m_recording_since; }
+    RecentTransactionsModel* recentTransactions() { return &m_recent_transactions; }
 
     void beginShutdown();
 
@@ -106,18 +159,20 @@ private:
 
     void startRecording(int64_t start_time);
     void sample();
-    void stopLoadThread();
+    void stopWorker();
 
     interfaces::Node& m_node;
     HandleNotificationsFn m_handle_notifications;
     WaitForNotificationsFn m_wait_for_notifications;
+    FindCoinsFn m_find_coins;
     std::shared_ptr<State> m_state;
     std::unique_ptr<interfaces::Handler> m_handler;
-    QThread* m_load_thread{nullptr};
+    QThread* m_worker_thread{nullptr};
     QTimer* m_sample_timer;
     QList<qreal> m_times;
     QList<qreal> m_rates;
     qint64 m_recording_since{0};
+    RecentTransactionsModel m_recent_transactions;
     bool m_started{false};
     bool m_stopping{false};
 };

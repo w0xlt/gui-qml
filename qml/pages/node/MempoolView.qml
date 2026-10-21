@@ -120,6 +120,8 @@ Page {
                 // Side by side, the cards are as tall as the taller one.
                 readonly property real cardHeight: columns > 1
                     ? Math.max(feesBox.cardImplicitHeight, difficultyBox.cardImplicitHeight) : 0
+                readonly property real listHeight: columns > 1
+                    ? Math.max(replacementsBox.cardImplicitHeight, transactionsBox.cardImplicitHeight) : 0
 
                 MempoolFeesBox {
                     id: feesBox
@@ -160,12 +162,25 @@ Page {
                 }
 
                 MempoolReplacementsBox {
+                    id: replacementsBox
                     objectName: "mempoolReplacementsBox"
-                    Layout.columnSpan: cards.columns
                     Layout.fillWidth: true
+                    Layout.preferredWidth: 1
                     Layout.maximumWidth: 600
                     Layout.alignment: Qt.AlignHCenter | Qt.AlignTop
                     model: recentReplacementsModel
+                    minimumCardHeight: cards.listHeight
+                }
+
+                MempoolTransactionsBox {
+                    id: transactionsBox
+                    objectName: "mempoolTransactionsBox"
+                    Layout.fillWidth: true
+                    Layout.preferredWidth: 1
+                    Layout.maximumWidth: 600
+                    Layout.alignment: Qt.AlignHCenter | Qt.AlignTop
+                    model: recentTransactionsModel
+                    minimumCardHeight: cards.listHeight
                 }
             }
         }

@@ -198,6 +198,19 @@ function formatBytes(bytes, significantDigits) {
     return Number(value).toLocaleString(Qt.locale(), 'f', decimals) + " " + units[unit]
 }
 
+// Amounts in BTC as mempool.space lists transactions: two to four decimals,
+// or as many as needed below 0.0001 BTC, which would otherwise read 0.00.
+function formatAmount(satoshis) {
+    var decimals = 4
+    if (satoshis > 0 && satoshis < 10000) {
+        decimals = 8
+        while (decimals > 4 && satoshis % Math.pow(10, 9 - decimals) === 0) --decimals
+    } else {
+        while (decimals > 2 && Math.round(satoshis / Math.pow(10, 8 - decimals)) % 10 === 0) --decimals
+    }
+    return Number(satoshis / 100000000).toLocaleString(Qt.locale(), 'f', decimals) + " BTC"
+}
+
 // Fee totals in BTC with two or three decimals, or as many as needed below
 // 0.001 BTC.
 function formatBlockFees(satoshis) {

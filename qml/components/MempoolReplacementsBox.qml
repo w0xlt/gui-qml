@@ -14,6 +14,9 @@ Control {
 
     // RecentReplacementsModel.
     property var model: null
+    // Height the card is at least, e.g. to line up with a card beside it.
+    property real minimumCardHeight: 0
+    readonly property real cardImplicitHeight: implicitContentHeight + topPadding + bottomPadding
 
     readonly property real feeColumnWidth: 100
     readonly property real statusColumnWidth: 120
@@ -23,6 +26,7 @@ Control {
     }
 
     padding: 20
+    implicitHeight: Math.max(cardImplicitHeight, minimumCardHeight)
 
     background: Rectangle {
         radius: 10

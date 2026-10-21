@@ -724,7 +724,8 @@ int QmlGuiMain(int argc, char* argv[])
         [chain = chain.get()](std::shared_ptr<interfaces::Chain::Notifications> notifications) {
             return chain->handleNotifications(std::move(notifications));
         },
-        [chain = chain.get()] { chain->waitForNotifications(); }};
+        [chain = chain.get()] { chain->waitForNotifications(); },
+        [chain = chain.get()](std::map<COutPoint, Coin>& coins) { chain->findCoins(coins); }};
     QObject::connect(&node_model, &NodeModel::chainStateReady,
                      &incoming_transactions_model, &IncomingTransactionsModel::start);
     shutdown_coordinator.addParticipant(&incoming_transactions_model, &IncomingTransactionsModel::drained,
@@ -794,6 +795,7 @@ int QmlGuiMain(int argc, char* argv[])
     engine->rootContext()->setContextProperty("mempoolBlocksModel", &mempool_blocks_model);
     engine->rootContext()->setContextProperty("minedBlocksModel", mempool_blocks_model.minedBlocks());
     engine->rootContext()->setContextProperty("incomingTransactionsModel", &incoming_transactions_model);
+    engine->rootContext()->setContextProperty("recentTransactionsModel", incoming_transactions_model.recentTransactions());
     engine->rootContext()->setContextProperty("recentReplacementsModel", &recent_replacements_model);
     engine->rootContext()->setContextProperty("networkStatusModel", &network_status_model);
     engine->rootContext()->setContextProperty("nodeModel", &node_model);

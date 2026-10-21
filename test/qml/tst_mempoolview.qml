@@ -128,7 +128,8 @@ TestCase {
         incomingTransactionsModel.recordingSince = 0
         incomingTransactionsModel.times = []
         incomingTransactionsModel.rates = []
-        recentReplacementsModel.setReplacements([])
+        recentReplacementsModel.setRows([])
+        recentTransactionsModel.setRows([])
         mempoolBlocksModel.loaded = false
         mempoolBlocksModel.active = false
         nodeModel.mempoolInformationAvailable = true
@@ -424,6 +425,7 @@ TestCase {
         compare(findChild(view, "mempoolDifficultyBox").visible, false)
         compare(findChild(view, "mempoolIncomingBox").visible, false)
         compare(findChild(view, "mempoolReplacementsBox").visible, false)
+        compare(findChild(view, "mempoolTransactionsBox").visible, false)
         compare(mempoolBlocksModel.active, false)
         compare(findChild(view, "mempoolSyncNote").visible, false)
         verify(findChild(view, "mempoolDescription").text.indexOf("not available") >= 0)
@@ -765,7 +767,7 @@ TestCase {
     }
 
     function test_replacements_show_fee_rates_and_status() {
-        recentReplacementsModel.setReplacements([
+        recentReplacementsModel.setRows([
             { txid: replacedTxid, oldFeeRate: 1.5, newFeeRate: 12.25, fullRbf: true, mined: true },
             { txid: "aa".repeat(32), oldFeeRate: -1, newFeeRate: 3, fullRbf: false, mined: false },
         ])
@@ -783,7 +785,7 @@ TestCase {
     }
 
     function test_clicking_a_replacement_copies_its_txid() {
-        recentReplacementsModel.setReplacements([
+        recentReplacementsModel.setRows([
             { txid: replacedTxid, oldFeeRate: 1.5, newFeeRate: 12.25, fullRbf: true, mined: false },
         ])
         const view = createView()
@@ -798,6 +800,64 @@ TestCase {
         const view = createView()
         verify(findChild(view, "mempoolReplacementsEmpty").visible)
         compare(replacementRows(view).length, 0)
+    }
+
+    function transactionRows(view) {
+        const box = findChild(view, "mempoolTransactionsBox")
+        const rows = []
+        const collect = function(item) {
+            for (let i = 0; i < item.children.length; ++i) {
+                const child = item.children[i]
+                if (child.objectName === "mempoolTransaction") rows.push(child)
+                else collect(child)
+            }
+        }
+        collect(box)
+        return rows
+    }
+
+    function test_amounts_read_like_mempool_space() {
+        const number = function(value, decimals) { return Number(value).toLocaleString(Qt.locale(), 'f', decimals) + " BTC" }
+        compare(Utils.formatAmount(123456789), number(1.2346, 4))
+        compare(Utils.formatAmount(120000000), number(1.2, 2))
+        compare(Utils.formatAmount(123095000), number(1.231, 3))
+        compare(Utils.formatAmount(0), number(0, 2))
+        // Small amounts keep their digits rather than reading 0.00.
+        compare(Utils.formatAmount(546), number(0.00000546, 8))
+        compare(Utils.formatAmount(5000), number(0.00005, 5))
+        compare(Utils.formatAmount(10000), number(0.0001, 4))
+    }
+
+    function test_recent_transactions_show_amount_and_fee_rate() {
+        recentTransactionsModel.setRows([
+            { txid: replacedTxid, value: 123456789, feeRate: 4.5 },
+            { txid: "bb".repeat(32), value: 546, feeRate: -1 },
+        ])
+        const view = createView()
+        compare(findChild(view, "mempoolTransactionsEmpty").visible, false)
+        const rows = transactionRows(view)
+        compare(rows.length, 2)
+        compare(findChild(rows[0], "mempoolTransactionTxid").txid, replacedTxid)
+        compare(findChild(rows[0], "mempoolTransactionAmount").text, Utils.formatAmount(123456789))
+        compare(findChild(rows[0], "mempoolTransactionFee").text, Utils.formatFeeRate(4.5) + " sat/vB")
+        compare(findChild(rows[1], "mempoolTransactionFee").text, "–")
+    }
+
+    function test_no_recent_transactions_yet() {
+        const view = createView()
+        verify(findChild(view, "mempoolTransactionsEmpty").visible)
+        compare(transactionRows(view).length, 0)
+    }
+
+    function test_transaction_lists_line_up_side_by_side() {
+        recentTransactionsModel.setRows([1, 2, 3, 4, 5, 6].map(function(i) {
+            return { txid: String(i).repeat(64), value: i * 100000, feeRate: i }
+        }))
+        const view = createView()
+        const replacements = findChild(view, "mempoolReplacementsBox")
+        const transactions = findChild(view, "mempoolTransactionsBox")
+        tryVerify(function() { return replacements.y === transactions.y && transactions.x > replacements.x })
+        compare(replacements.height, transactions.height)
     }
 
     function test_sync_note_while_syncing() {
