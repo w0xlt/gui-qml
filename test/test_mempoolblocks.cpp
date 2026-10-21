@@ -112,7 +112,7 @@ private Q_SLOTS:
     void medianIsWeightedAndCountsUnusedSpace();
     void parsesBlockStats();
     void rejectsMalformedBlockStats();
-    void parsesMempoolMinFee();
+    void parsesMempoolInfo();
     void recommendsFeesLikeMempoolSpace();
 };
 
@@ -295,15 +295,24 @@ void MempoolBlocksTests::rejectsMalformedBlockStats()
     }
 }
 
-void MempoolBlocksTests::parsesMempoolMinFee()
+void MempoolBlocksTests::parsesMempoolInfo()
 {
     UniValue info{UniValue::VOBJ};
+    info.pushKV("size", 3'200);
+    info.pushKV("usage", 41'500'000);
+    info.pushKV("maxmempool", 300'000'000);
     info.pushKV("mempoolminfee", ValueFromAmount(1'234));
-    QCOMPARE(mempool_blocks::ParseMempoolMinFee(info), CAmount{1'234});
+    info.pushKV("minrelaytxfee", ValueFromAmount(100));
+    const mempool_blocks::MempoolInfo parsed{mempool_blocks::ParseMempoolInfo(info)};
+    QCOMPARE(parsed.min_fee, CAmount{1'234});
+    QCOMPARE(parsed.min_relay_fee, CAmount{100});
+    QCOMPARE(parsed.transaction_count, int64_t{3'200});
+    QCOMPARE(parsed.usage, int64_t{41'500'000});
+    QCOMPARE(parsed.max_usage, int64_t{300'000'000});
 
     bool threw{false};
     try {
-        mempool_blocks::ParseMempoolMinFee(UniValue{UniValue::VOBJ});
+        mempool_blocks::ParseMempoolInfo(UniValue{UniValue::VOBJ});
     } catch (const std::exception&) {
         threw = true;
     }

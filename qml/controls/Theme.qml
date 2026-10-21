@@ -17,6 +17,9 @@ Control {
         "#BC4A34", "#BB4339", "#BB3D3C", "#BB373F", "#BA3243", "#B92B48", "#B9254B", "#B8214D",
         "#B71D4F", "#B61951", "#B41453", "#B30E55", "#B10857", "#B00259", "#AE005B",
     ]
+    // mempool.space incoming transactions chart colors, from slower to faster
+    // than blocks clear transactions.
+    readonly property var mempoolIncomingColors: ["#7CB342", "#FDD835", "#FFB300", "#FB8C00", "#F4511E", "#D81B60"]
     // mempool.space mined block fills, top to bottom, by ChainModel network name.
     readonly property var mempoolMinedBlockFills: ({
         "MAIN": ["#9339F4", "#007CFA"],
@@ -68,6 +71,7 @@ Control {
         required property color mempoolMinedBlockEmpty
         required property var mempoolMinedBlockFills
         required property var mempoolFeeColors
+        required property var mempoolIncomingColors
         required property color mempoolProgressEmpty
         required property color mempoolProgressStart
         required property color mempoolProgressEnd
@@ -144,6 +148,7 @@ Control {
         mempoolMinedBlockEmpty: "#272F4E"
         mempoolMinedBlockFills: root.mempoolMinedBlockFills
         mempoolFeeColors: root.mempoolFeeColors
+        mempoolIncomingColors: root.mempoolIncomingColors
         mempoolProgressEmpty: "#272F4E"
         mempoolProgressStart: "#007CFA"
         mempoolProgressEnd: "#9339F4"
@@ -197,6 +202,7 @@ Control {
         mempoolMinedBlockEmpty: "#7E8CA9"
         mempoolMinedBlockFills: root.mempoolMinedBlockFills
         mempoolFeeColors: root.mempoolFeeColors
+        mempoolIncomingColors: root.mempoolIncomingColors
         mempoolProgressEmpty: "#DADCE1"
         mempoolProgressStart: "#007CFA"
         mempoolProgressEnd: "#9339F4"

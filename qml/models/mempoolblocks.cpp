@@ -285,9 +285,15 @@ MinedBlock ParseBlockStats(const UniValue& stats, std::string hash)
     return block;
 }
 
-CAmount ParseMempoolMinFee(const UniValue& mempool_info)
+MempoolInfo ParseMempoolInfo(const UniValue& mempool_info)
 {
-    return ParseAmount(mempool_info["mempoolminfee"]);
+    MempoolInfo info;
+    info.min_fee = ParseAmount(mempool_info["mempoolminfee"]);
+    info.min_relay_fee = ParseAmount(mempool_info["minrelaytxfee"]);
+    info.transaction_count = mempool_info["size"].getInt<int64_t>();
+    info.usage = mempool_info["usage"].getInt<int64_t>();
+    info.max_usage = mempool_info["maxmempool"].getInt<int64_t>();
+    return info;
 }
 
 RecommendedFees RecommendFees(const std::vector<ProjectedBlock>& blocks, CAmount mempool_min_fee)

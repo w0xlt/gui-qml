@@ -83,6 +83,20 @@ struct RecommendedFees {
     friend bool operator==(const RecommendedFees&, const RecommendedFees&) = default;
 };
 
+//! The parts of `getmempoolinfo` the mempool tab shows.
+struct MempoolInfo {
+    //! Fee rates in satoshis per kvB. The minimum fee rises above the
+    //! minimum relay fee while the mempool is full and purges transactions.
+    CAmount min_fee{0};
+    CAmount min_relay_fee{0};
+    int64_t transaction_count{0};
+    //! Memory usage and its limit, in bytes.
+    int64_t usage{0};
+    int64_t max_usage{0};
+
+    friend bool operator==(const MempoolInfo&, const MempoolInfo&) = default;
+};
+
 //! Statistics that ParseBlockStats() reads, to pass to `getblockstats`.
 std::vector<std::string> BlockStatsFields();
 
@@ -94,9 +108,9 @@ std::vector<MempoolTx> ParseRawMempool(const UniValue& verbose_mempool);
 //! Throws std::exception subclasses on malformed input.
 MinedBlock ParseBlockStats(const UniValue& stats, std::string hash);
 
-//! Parse the `mempoolminfee` of `getmempoolinfo`, in satoshis per kvB.
-//! Throws std::runtime_error or std::exception subclasses on malformed input.
-CAmount ParseMempoolMinFee(const UniValue& mempool_info);
+//! Parse the result of `getmempoolinfo`. Throws std::runtime_error or
+//! std::exception subclasses on malformed input.
+MempoolInfo ParseMempoolInfo(const UniValue& mempool_info);
 
 //! Same recommendations as mempool.space's getPreciseRecommendedFee(), from
 //! the projected blocks and the mempool's minimum fee rate in satoshis per

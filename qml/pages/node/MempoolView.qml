@@ -63,6 +63,7 @@ Page {
 
         ColumnLayout {
             id: content
+            objectName: "mempoolContent"
             y: 30
             width: scroll.width
             spacing: 20
@@ -106,6 +107,7 @@ Page {
             // Side by side when there is room, like mempool.space's dashboard.
             GridLayout {
                 id: cards
+                objectName: "mempoolCards"
                 Layout.fillWidth: true
                 Layout.maximumWidth: 2 * 600 + columnSpacing
                 Layout.alignment: Qt.AlignHCenter
@@ -143,6 +145,18 @@ Page {
                     loaded: mempoolBlocksModel.loaded
                     pulseStep: strip.pulseStep
                     minimumCardHeight: cards.cardHeight
+                }
+
+                MempoolIncomingBox {
+                    objectName: "mempoolIncomingBox"
+                    Layout.columnSpan: cards.columns
+                    Layout.fillWidth: true
+                    Layout.maximumWidth: cards.columns > 1 ? 2 * 600 + cards.columnSpacing : 600
+                    Layout.alignment: Qt.AlignHCenter | Qt.AlignTop
+                    mempoolInfo: mempoolBlocksModel.mempoolInfo
+                    times: incomingTransactionsModel.times
+                    rates: incomingTransactionsModel.rates
+                    recordingSince: incomingTransactionsModel.recordingSince
                 }
             }
         }

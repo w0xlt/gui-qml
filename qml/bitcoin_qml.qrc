@@ -21,6 +21,7 @@
         <file>components/MempoolBlocksStrip.qml</file>
         <file>components/MempoolDifficultyBox.qml</file>
         <file>components/MempoolFeesBox.qml</file>
+        <file>components/MempoolIncomingBox.qml</file>
         <file>components/MempoolInformationRows.qml</file>
         <file>components/MenuCommand.qml</file>
         <file>components/DeveloperOptions.qml</file>

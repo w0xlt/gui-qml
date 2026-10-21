@@ -92,6 +92,10 @@ function formatRemainingSyncTime(milliseconds) {
     }
 }
 
+// Rates in vB/s where mempool.space's incoming transactions chart changes
+// color. Theme.color.mempoolIncomingColors has one more color than limits.
+var mempoolIncomingLimits = [1667, 2000, 2500, 3000, 3500]
+
 // Fee rate levels in sat/vB that mempool.space uses to color fee rates.
 // Theme.color.mempoolFeeColors has one color per level.
 var mempoolFeeLevels = [0, 1, 2, 3, 4, 5, 6, 8, 10, 12, 15, 20, 30, 40, 50, 60, 70, 80, 90, 100,
@@ -168,6 +172,30 @@ function formatDuration(seconds, until, options) {
 function formatRecommendedFeeRate(feeRate) {
     var decimals = feeRate >= 1 ? 0 : (feeRate >= 0.1 ? 1 : 2)
     return Number(feeRate).toLocaleString(Qt.locale(), 'f', decimals)
+}
+
+// Byte counts in the largest decimal unit that keeps them under 1000, as
+// mempool.space writes them: with significantDigits digits, e.g. 3 for
+// "93.2 kB" or "287 MB", or else whole, e.g. "300 MB". Bytes are always whole.
+function formatBytes(bytes, significantDigits) {
+    var units = ["B", "kB", "MB", "GB", "TB"]
+    var unit = 0
+    var value = bytes
+    while (value >= 1000 && unit < units.length - 1) {
+        value /= 1000
+        ++unit
+    }
+    var decimals = 0
+    if (significantDigits && unit > 0 && value > 0) {
+        decimals = Math.max(0, significantDigits - 1 - Math.floor(Math.log10(value)))
+        // Rounding up to 1000 moves to the next unit, e.g. 999.6 kB is 1.00 MB.
+        if (Math.round(value * Math.pow(10, decimals)) >= 1000 * Math.pow(10, decimals) && unit < units.length - 1) {
+            value /= 1000
+            ++unit
+            decimals = significantDigits - 1
+        }
+    }
+    return Number(value).toLocaleString(Qt.locale(), 'f', decimals) + " " + units[unit]
 }
 
 // Fee totals in BTC with two or three decimals, or as many as needed below

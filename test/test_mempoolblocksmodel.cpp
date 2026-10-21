@@ -92,7 +92,11 @@ UniValue ChainRpc(const std::string& method, const UniValue& params, int tip, in
     if (method == "getrawmempool") return OneTxMempool();
     if (method == "getmempoolinfo") {
         UniValue info{UniValue::VOBJ};
+        info.pushKV("size", 1);
+        info.pushKV("usage", 1'000);
+        info.pushKV("maxmempool", 300'000'000);
         info.pushKV("mempoolminfee", ValueFromAmount(100));
+        info.pushKV("minrelaytxfee", ValueFromAmount(100));
         return info;
     }
     if (method == "getblockhash") {
@@ -487,6 +491,12 @@ void MempoolBlocksModelTests::fetchesOffGuiThreadOnlyWhileActiveAfterStart()
     QCOMPARE(model.data(model.index(0), MempoolBlocksModel::HeightRole).toInt(), 101);
     QCOMPARE(model.recommendedFees().value(QStringLiteral("fastest")).toDouble(), 1.0);
     QCOMPARE(model.recommendedFees().value(QStringLiteral("minimum")).toDouble(), 0.1);
+    const QVariantMap mempool_info{model.mempoolInfo()};
+    QCOMPARE(mempool_info.value(QStringLiteral("minFee")).toDouble(), 0.1);
+    QCOMPARE(mempool_info.value(QStringLiteral("minRelayFee")).toDouble(), 0.1);
+    QCOMPARE(mempool_info.value(QStringLiteral("transactionCount")).toLongLong(), qint64{1});
+    QCOMPARE(mempool_info.value(QStringLiteral("usage")).toLongLong(), qint64{1'000});
+    QCOMPARE(mempool_info.value(QStringLiteral("maxUsage")).toLongLong(), qint64{300'000'000});
     QTRY_VERIFY_WITH_TIMEOUT(calls.load() >= 3, ASYNC_TIMEOUT_MS);
     QVERIFY(!fetched_on_gui_thread.load());
     QVERIFY(!unexpected_request.load());

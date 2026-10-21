@@ -36,6 +36,7 @@ struct MempoolBlocksSnapshot {
     std::vector<mempool_blocks::ProjectedBlock> blocks;
     std::vector<mempool_blocks::MinedBlock> mined_blocks;
     mempool_blocks::RecommendedFees recommended_fees;
+    mempool_blocks::MempoolInfo mempool_info;
     int64_t now_seconds{0};
     std::optional<difficulty_adjustment::DifficultyAdjustment> difficulty_adjustment;
     std::optional<difficulty_adjustment::Halving> halving;
@@ -137,7 +138,8 @@ private:
             const UniValue mempool{m_node.executeRpc("getrawmempool", params, /*uri=*/"")};
             snapshot.blocks = mempool_blocks::ProjectBlocks(mempool_blocks::ParseRawMempool(mempool));
             const UniValue mempool_info{m_node.executeRpc("getmempoolinfo", UniValue{UniValue::VARR}, /*uri=*/"")};
-            snapshot.recommended_fees = mempool_blocks::RecommendFees(snapshot.blocks, mempool_blocks::ParseMempoolMinFee(mempool_info));
+            snapshot.mempool_info = mempool_blocks::ParseMempoolInfo(mempool_info);
+            snapshot.recommended_fees = mempool_blocks::RecommendFees(snapshot.blocks, snapshot.mempool_info.min_fee);
             mempool_cost_ms = mempool_timer.elapsed();
             m_publish(std::move(snapshot));
         } catch (const UniValue&) {
@@ -365,6 +367,7 @@ MempoolBlocksModel::MempoolBlocksModel(interfaces::Node& node, difficulty_adjust
         QMetaObject::invokeMethod(this, [this, snapshot = std::move(snapshot)]() mutable {
             if (m_stopping || !m_active || snapshot.generation != m_activation_generation) return;
             setChainEstimates(snapshot.now_seconds, snapshot.difficulty_adjustment, snapshot.halving);
+            setMempoolInfo(snapshot.mempool_info);
             applySnapshot(snapshot.tip_height, std::move(snapshot.blocks), std::move(snapshot.mined_blocks),
                           snapshot.recommended_fees);
         }, Qt::QueuedConnection);
@@ -468,6 +471,25 @@ QVariantMap MempoolBlocksModel::halving() const
         {QStringLiteral("progressPercent"), m_halving->progress_percent},
         {QStringLiteral("estimatedDate"), QVariant::fromValue<qint64>(m_halving->estimated_date)},
     };
+}
+
+QVariantMap MempoolBlocksModel::mempoolInfo() const
+{
+    if (!m_mempool_info) return {};
+    return {
+        {QStringLiteral("minFee"), m_mempool_info->min_fee / 1000.0},
+        {QStringLiteral("minRelayFee"), m_mempool_info->min_relay_fee / 1000.0},
+        {QStringLiteral("transactionCount"), QVariant::fromValue<qint64>(m_mempool_info->transaction_count)},
+        {QStringLiteral("usage"), QVariant::fromValue<qint64>(m_mempool_info->usage)},
+        {QStringLiteral("maxUsage"), QVariant::fromValue<qint64>(m_mempool_info->max_usage)},
+    };
+}
+
+void MempoolBlocksModel::setMempoolInfo(const mempool_blocks::MempoolInfo& info)
+{
+    if (m_mempool_info == info) return;
+    m_mempool_info = info;
+    Q_EMIT mempoolInfoChanged();
 }
 
 void MempoolBlocksModel::setChainEstimates(int64_t now_seconds,

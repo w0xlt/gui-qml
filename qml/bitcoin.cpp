@@ -34,6 +34,7 @@
 #include <qml/androidnotifier.h>
 #endif
 #include <qml/components/blockclockdial.h>
+#include <qml/controls/bandedlinegraph.h>
 #include <qml/controls/linegraph.h>
 #include <qml/guiconstants.h>
 #include <qml/imageprovider.h>
@@ -47,6 +48,7 @@
 #include <qml/models/bumptransactionmodel.h>
 #include <qml/models/chainmodel.h>
 #include <qml/models/debuglogmodel.h>
+#include <qml/models/incomingtransactionsmodel.h>
 #include <qml/models/mempoolblocksmodel.h>
 #include <qml/models/networktraffictower.h>
 #include <qml/models/networkstatusmodel.h>
@@ -301,6 +303,7 @@ void RegisterQmlTypes(AppMode& app_mode, BuildInfo& build_info, Clipboard& clipb
     qmlRegisterType<QmlFileDialog>("org.bitcoincore.qt", 1, 0, "AppFileDialog");
     qmlRegisterType<BlockClockDial>("org.bitcoincore.qt", 1, 0, "BlockClockDial");
     qmlRegisterType<LineGraph>("org.bitcoincore.qt", 1, 0, "LineGraph");
+    qmlRegisterType<BandedLineGraph>("org.bitcoincore.qt", 1, 0, "BandedLineGraph");
     qmlRegisterUncreatableType<PeerDetailsModel>("org.bitcoincore.qt", 1, 0, "PeerDetailsModel", "");
     qmlRegisterUncreatableType<DebugLogModel>("org.bitcoincore.qt", 1, 0, "DebugLogModel", "");
     qmlRegisterUncreatableType<RpcConsoleModel>("org.bitcoincore.qt", 1, 0, "RpcConsoleModel", "");
@@ -715,6 +718,16 @@ int QmlGuiMain(int argc, char* argv[])
                      &mempool_blocks_model, &MempoolBlocksModel::refresh);
     shutdown_coordinator.addParticipant(&mempool_blocks_model, &MempoolBlocksModel::drained,
                                         [&] { mempool_blocks_model.beginShutdown(); });
+    IncomingTransactionsModel incoming_transactions_model{
+        *node,
+        [chain = chain.get()](std::shared_ptr<interfaces::Chain::Notifications> notifications) {
+            return chain->handleNotifications(std::move(notifications));
+        },
+        [chain = chain.get()] { chain->waitForNotifications(); }};
+    QObject::connect(&node_model, &NodeModel::chainStateReady,
+                     &incoming_transactions_model, &IncomingTransactionsModel::start);
+    shutdown_coordinator.addParticipant(&incoming_transactions_model, &IncomingTransactionsModel::drained,
+                                        [&] { incoming_transactions_model.beginShutdown(); });
     NetworkStatusModel network_status_model;
 #ifdef __ANDROID__
     AndroidNotifier android_notifier{node_model};
@@ -770,6 +783,7 @@ int QmlGuiMain(int argc, char* argv[])
     engine->rootContext()->setContextProperty("networkTrafficTower", &network_traffic_tower);
     engine->rootContext()->setContextProperty("mempoolBlocksModel", &mempool_blocks_model);
     engine->rootContext()->setContextProperty("minedBlocksModel", mempool_blocks_model.minedBlocks());
+    engine->rootContext()->setContextProperty("incomingTransactionsModel", &incoming_transactions_model);
     engine->rootContext()->setContextProperty("networkStatusModel", &network_status_model);
     engine->rootContext()->setContextProperty("nodeModel", &node_model);
     engine->rootContext()->setContextProperty("chainModel", &chain_model);

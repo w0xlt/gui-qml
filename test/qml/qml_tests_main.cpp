@@ -32,6 +32,7 @@
 #include <qml/backendexecutor.h>
 #include <qml/bitcoinamount.h>
 #include <qml/components/blockclockdial.h>
+#include <qml/controls/bandedlinegraph.h>
 #include <qml/controls/linegraph.h>
 
 class MockAppMode : public QObject
@@ -2961,6 +2962,7 @@ class MockMempoolBlocksModel : public QAbstractListModel
     Q_PROPERTY(QVariantMap recommendedFees MEMBER m_recommended_fees NOTIFY recommendedFeesChanged)
     Q_PROPERTY(QVariantMap difficultyAdjustment MEMBER m_difficulty_adjustment NOTIFY chainEstimatesChanged)
     Q_PROPERTY(QVariantMap halving MEMBER m_halving NOTIFY chainEstimatesChanged)
+    Q_PROPERTY(QVariantMap mempoolInfo MEMBER m_mempool_info NOTIFY mempoolInfoChanged)
 
 public:
     int rowCount(const QModelIndex& parent = QModelIndex()) const override
@@ -3034,6 +3036,7 @@ Q_SIGNALS:
     void countChanged();
     void recommendedFeesChanged();
     void chainEstimatesChanged();
+    void mempoolInfoChanged();
 
 private:
     bool m_active{false};
@@ -3041,7 +3044,25 @@ private:
     QVariantMap m_recommended_fees;
     QVariantMap m_difficulty_adjustment;
     QVariantMap m_halving;
+    QVariantMap m_mempool_info;
     QList<QVariantMap> m_blocks;
+};
+
+class MockIncomingTransactionsModel : public QObject
+{
+    Q_OBJECT
+    Q_PROPERTY(QList<qreal> times MEMBER m_times NOTIFY samplesChanged)
+    Q_PROPERTY(QList<qreal> rates MEMBER m_rates NOTIFY samplesChanged)
+    Q_PROPERTY(qint64 recordingSince MEMBER m_recording_since NOTIFY recordingSinceChanged)
+
+Q_SIGNALS:
+    void samplesChanged();
+    void recordingSinceChanged();
+
+private:
+    QList<qreal> m_times;
+    QList<qreal> m_rates;
+    qint64 m_recording_since{0};
 };
 
 class MockPeerListModelProxy : public QAbstractListModel
@@ -4234,6 +4255,7 @@ public Q_SLOTS:
         static MockNetworkTrafficTower network_traffic_tower;
         static MockMempoolBlocksModel mempool_blocks_model;
         static MockMempoolBlocksModel mined_blocks_model;
+        static MockIncomingTransactionsModel incoming_transactions_model;
         static MockNetworkStatusModel network_status_model;
         static MockPeerListModelProxy peer_list_model_proxy;
         static MockBanListModel ban_list_model;
@@ -4301,6 +4323,7 @@ public Q_SLOTS:
         qmlRegisterType<MockFileDialog>("org.bitcoincore.qt", 1, 0, "AppFileDialog");
         qmlRegisterType<BlockClockDial>("org.bitcoincore.qt", 1, 0, "BlockClockDial");
         qmlRegisterType<LineGraph>("org.bitcoincore.qt", 1, 0, "LineGraph");
+        qmlRegisterType<BandedLineGraph>("org.bitcoincore.qt", 1, 0, "BandedLineGraph");
         engine->rootContext()->setContextProperty(QStringLiteral("optionsModel"), &options_model);
         engine->rootContext()->setContextProperty(QStringLiteral("chainModel"), &chain_model);
         engine->rootContext()->setContextProperty(QStringLiteral("blockClockModel"), &block_clock_model);
@@ -4309,6 +4332,7 @@ public Q_SLOTS:
         engine->rootContext()->setContextProperty(QStringLiteral("networkTrafficTower"), &network_traffic_tower);
         engine->rootContext()->setContextProperty(QStringLiteral("mempoolBlocksModel"), &mempool_blocks_model);
         engine->rootContext()->setContextProperty(QStringLiteral("minedBlocksModel"), &mined_blocks_model);
+        engine->rootContext()->setContextProperty(QStringLiteral("incomingTransactionsModel"), &incoming_transactions_model);
         engine->rootContext()->setContextProperty(QStringLiteral("testNetworkTrafficTower"), &network_traffic_tower);
         engine->rootContext()->setContextProperty(QStringLiteral("networkStatusModel"), &network_status_model);
         engine->rootContext()->setContextProperty(QStringLiteral("peerListModelProxy"), &peer_list_model_proxy);

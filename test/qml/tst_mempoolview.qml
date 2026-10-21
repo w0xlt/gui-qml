@@ -73,7 +73,20 @@ TestCase {
         }
         mempoolBlocksModel.difficultyAdjustment = difficultyAt(1338.0916666666667)
         mempoolBlocksModel.halving = halvingIn(9973)
+        mempoolBlocksModel.mempoolInfo = {
+            minFee: 0.1,
+            minRelayFee: 0.1,
+            transactionCount: 32100,
+            usage: 56290000,
+            maxUsage: 300000000,
+        }
+        incomingTransactionsModel.recordingSince = estimatesTime - 90 * 60000
+        incomingTransactionsModel.times = incomingTimes
+        incomingTransactionsModel.rates = [900, 1200, 1700, 2600, 4000, 1500]
     }
+
+    // Six samples a minute apart, ending with the last estimates.
+    readonly property var incomingTimes: [5, 4, 3, 2, 1, 0].map(function(minutesAgo) { return estimatesTime - minutesAgo * 60000 })
 
     // Block 830027, from mempool.space's difficulty adjustment tests: 1,451
     // blocks into the period, with expectedBlocks expected by now.
@@ -110,6 +123,10 @@ TestCase {
         mempoolBlocksModel.recommendedFees = {}
         mempoolBlocksModel.difficultyAdjustment = {}
         mempoolBlocksModel.halving = {}
+        mempoolBlocksModel.mempoolInfo = {}
+        incomingTransactionsModel.recordingSince = 0
+        incomingTransactionsModel.times = []
+        incomingTransactionsModel.rates = []
         mempoolBlocksModel.loaded = false
         mempoolBlocksModel.active = false
         nodeModel.mempoolInformationAvailable = true
@@ -122,9 +139,10 @@ TestCase {
         const list = findChild(view, "mempoolBlocksView")
         verify(list !== null)
         tryCompare(list, "count", mempoolBlocksModel.count)
-        // The cards get their width once the layout is polished.
-        const fees = findChild(view, "mempoolFeesBox")
-        if (fees.visible) tryVerify(function() { return fees.width > 0 })
+        // The cards get their place once the layouts are polished.
+        const content = findChild(view, "mempoolContent")
+        const cards = findChild(view, "mempoolCards")
+        tryVerify(function() { return !isPolishScheduled(content) && !isPolishScheduled(cards) })
         return view
     }
 
@@ -402,6 +420,7 @@ TestCase {
         compare(findChild(view, "mempoolBlocksStrip").visible, false)
         compare(findChild(view, "mempoolFeesBox").visible, false)
         compare(findChild(view, "mempoolDifficultyBox").visible, false)
+        compare(findChild(view, "mempoolIncomingBox").visible, false)
         compare(mempoolBlocksModel.active, false)
         compare(findChild(view, "mempoolSyncNote").visible, false)
         verify(findChild(view, "mempoolDescription").text.indexOf("not available") >= 0)
@@ -607,6 +626,110 @@ TestCase {
         compare(fees.width, difficulty.width)
         view.width = 600
         tryVerify(function() { return difficulty.y > fees.y + fees.height })
+    }
+
+    function infoItems(view) {
+        const box = findChild(view, "mempoolIncomingBox")
+        const items = []
+        const collect = function(item) {
+            for (let i = 0; i < item.children.length; ++i) {
+                const child = item.children[i]
+                if (child.objectName === "mempoolInfoItem") items.push(child)
+                else collect(child)
+            }
+        }
+        collect(box)
+        compare(items.length, 3)
+        return items
+    }
+
+    function test_mempool_info_shows_fee_memory_and_size() {
+        const view = createView()
+        const items = infoItems(view)
+        compare(findChild(items[0], "mempoolInfoTitle").text, "Minimum fee")
+        compare(findChild(items[0], "mempoolInfoNumber").text, Utils.formatFeeRate(0.1))
+        compare(findChild(items[1], "mempoolInfoTitle").text, "Memory usage")
+        compare(findChild(items[1], "mempoolMemoryText").text,
+                Number(56.3).toLocaleString(Qt.locale(), 'f', 1) + " MB / 300 MB")
+        const bar = findChild(items[1], "mempoolMemoryBar")
+        const used = findChild(items[1], "mempoolMemoryUsed")
+        fuzzyCompare(used.width, bar.width * 56.29 / 300, 0.01)
+        verify(Qt.colorEqual(used.color, Theme.color.green))
+        compare(findChild(items[2], "mempoolInfoTitle").text, "Unconfirmed")
+        compare(findChild(items[2], "mempoolInfoNumber").text, Number(32100).toLocaleString(Qt.locale(), 'f', 0))
+    }
+
+    function test_bytes_read_like_mempool_space() {
+        const number = function(value, decimals) { return Number(value).toLocaleString(Qt.locale(), 'f', decimals) }
+        compare(Utils.formatBytes(512, 3), "512 B")
+        compare(Utils.formatBytes(4000, 3), number(4, 2) + " kB")
+        compare(Utils.formatBytes(93200, 3), number(93.2, 1) + " kB")
+        compare(Utils.formatBytes(999600, 3), number(1, 2) + " MB")
+        compare(Utils.formatBytes(56290000, 3), number(56.3, 1) + " MB")
+        compare(Utils.formatBytes(287450000, 3), "287 MB")
+        compare(Utils.formatBytes(300000000), "300 MB")
+        compare(Utils.formatBytes(0, 3), "0 B")
+    }
+
+    function test_small_mempool_shows_its_memory_in_kilobytes() {
+        mempoolBlocksModel.mempoolInfo = { minFee: 0.1, minRelayFee: 0.1, transactionCount: 38, usage: 93200, maxUsage: 300000000 }
+        const view = createView()
+        compare(findChild(infoItems(view)[1], "mempoolMemoryText").text,
+                Number(93.2).toLocaleString(Qt.locale(), 'f', 1) + " kB / 300 MB")
+    }
+
+    function test_full_mempool_shows_purging() {
+        mempoolBlocksModel.mempoolInfo = { minFee: 1.5, minRelayFee: 0.1, transactionCount: 250000, usage: 290000000, maxUsage: 300000000 }
+        const view = createView()
+        const items = infoItems(view)
+        compare(findChild(items[0], "mempoolInfoTitle").text, "Purging")
+        compare(findChild(items[0], "mempoolInfoNumber").text, "< " + Utils.formatFeeRate(1.5))
+        verify(Qt.colorEqual(findChild(items[1], "mempoolMemoryUsed").color, Theme.color.red))
+    }
+
+    function test_incoming_chart_spans_two_hours_with_room_for_the_clearing_rate() {
+        const view = createView()
+        const graph = findChild(view, "mempoolIncomingGraph")
+        compare(graph.maxX, estimatesTime)
+        compare(graph.minX, estimatesTime - 2 * 60 * 60000)
+        compare(graph.maxY, 4000)
+        compare(graph.referenceValue, 1667)
+        compare(graph.gridValues, [0, 1000, 2000, 3000, 4000])
+        compare(graph.xValues.length, 6)
+        verify(findChild(view, "mempoolIncomingSince").visible)
+        compare(findChild(view, "mempoolIncomingMessage").visible, false)
+
+        incomingTransactionsModel.rates = [100, 200, 300, 400, 500, 600]
+        compare(graph.maxY, 1800)
+        compare(graph.gridValues, [0, 500, 1000, 1500])
+    }
+
+    function test_hovering_the_chart_shows_the_nearest_rate() {
+        const view = createView()
+        const graph = findChild(view, "mempoolIncomingGraph")
+        const tip = findChild(view, "mempoolIncomingTip")
+        compare(tip.visible, false)
+        const scroll = findChild(view, "mempoolScroll")
+        verify(scroll.interactive)
+        scroll.contentY = scroll.contentHeight - scroll.height
+        // Over the sample from 2 minutes ago.
+        mouseMove(graph, graph.width * (1 - 2 / 120), graph.height / 2)
+        tryCompare(tip, "visible", true)
+        compare(findChild(tip, "mempoolIncomingTipRate").text, Number(2600).toLocaleString(Qt.locale(), 'f', 0) + " vB/s")
+        compare(findChild(tip, "mempoolIncomingTipTime").text,
+                new Date(estimatesTime - 2 * 60000).toLocaleTimeString(Qt.locale(), Locale.ShortFormat))
+    }
+
+    function test_incoming_chart_waits_for_samples() {
+        incomingTransactionsModel.times = []
+        incomingTransactionsModel.rates = []
+        incomingTransactionsModel.recordingSince = 0
+        const view = createView()
+        const message = findChild(view, "mempoolIncomingMessage")
+        verify(message.visible)
+        verify(message.text.indexOf("saved mempool") >= 0)
+        incomingTransactionsModel.recordingSince = estimatesTime
+        verify(message.text.indexOf("after a minute") >= 0)
     }
 
     function test_sync_note_while_syncing() {

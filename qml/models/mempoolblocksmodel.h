@@ -76,6 +76,10 @@ class MempoolBlocksModel : public QAbstractListModel
     //! retargets at all. Empty while the node syncs.
     Q_PROPERTY(QVariantMap difficultyAdjustment READ difficultyAdjustment NOTIFY chainEstimatesChanged)
     Q_PROPERTY(QVariantMap halving READ halving NOTIFY chainEstimatesChanged)
+    //! The mempool's minimum and minimum relay fee rates in sat/vB, and its
+    //! transaction count and memory usage and limit in bytes, keyed minFee,
+    //! minRelayFee, transactionCount, usage and maxUsage.
+    Q_PROPERTY(QVariantMap mempoolInfo READ mempoolInfo NOTIFY mempoolInfoChanged)
 
 public:
     enum Roles {
@@ -103,6 +107,7 @@ public:
     QVariantMap recommendedFees() const;
     QVariantMap difficultyAdjustment() const;
     QVariantMap halving() const;
+    QVariantMap mempoolInfo() const;
     //! Recent blocks, refreshed together with the projected ones.
     MinedBlocksModel* minedBlocks() { return &m_mined_blocks; }
 
@@ -114,6 +119,7 @@ public:
     void applySnapshot(int tip_height, std::vector<mempool_blocks::ProjectedBlock> blocks,
                        std::vector<mempool_blocks::MinedBlock> mined_blocks = {},
                        const mempool_blocks::RecommendedFees& recommended_fees = {});
+    void setMempoolInfo(const mempool_blocks::MempoolInfo& info);
     //! Apply estimates made at now_seconds, or none.
     void setChainEstimates(int64_t now_seconds,
                            std::optional<difficulty_adjustment::DifficultyAdjustment> difficulty_adjustment,
@@ -133,6 +139,7 @@ Q_SIGNALS:
     void countChanged();
     void recommendedFeesChanged();
     void chainEstimatesChanged();
+    void mempoolInfoChanged();
 
 private:
     MempoolBlocksWorker* m_worker{nullptr};
@@ -149,6 +156,7 @@ private:
     int64_t m_estimates_time{0};
     std::optional<difficulty_adjustment::DifficultyAdjustment> m_difficulty_adjustment;
     std::optional<difficulty_adjustment::Halving> m_halving;
+    std::optional<mempool_blocks::MempoolInfo> m_mempool_info;
     MinedBlocksModel m_mined_blocks;
 };
 
