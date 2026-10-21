@@ -32,6 +32,7 @@ struct MempoolBlocksSnapshot {
     int tip_height{0};
     std::vector<mempool_blocks::ProjectedBlock> blocks;
     std::vector<mempool_blocks::MinedBlock> mined_blocks;
+    mempool_blocks::RecommendedFees recommended_fees;
 };
 
 QVariantList FeeRangeList(const std::vector<double>& fee_range)
@@ -120,6 +121,8 @@ private:
             params.push_back(/*verbose=*/true);
             const UniValue mempool{m_node.executeRpc("getrawmempool", params, /*uri=*/"")};
             snapshot.blocks = mempool_blocks::ProjectBlocks(mempool_blocks::ParseRawMempool(mempool));
+            const UniValue mempool_info{m_node.executeRpc("getmempoolinfo", UniValue{UniValue::VARR}, /*uri=*/"")};
+            snapshot.recommended_fees = mempool_blocks::RecommendFees(snapshot.blocks, mempool_blocks::ParseMempoolMinFee(mempool_info));
             mempool_cost_ms = mempool_timer.elapsed();
             m_publish(std::move(snapshot));
         } catch (const UniValue&) {
@@ -299,7 +302,8 @@ MempoolBlocksModel::MempoolBlocksModel(interfaces::Node& node, int min_refresh_i
     m_worker = new MempoolBlocksWorker(node, min_refresh_interval_ms, [this](MempoolBlocksSnapshot snapshot) {
         QMetaObject::invokeMethod(this, [this, snapshot = std::move(snapshot)]() mutable {
             if (m_stopping || !m_active || snapshot.generation != m_activation_generation) return;
-            applySnapshot(snapshot.tip_height, std::move(snapshot.blocks), std::move(snapshot.mined_blocks));
+            applySnapshot(snapshot.tip_height, std::move(snapshot.blocks), std::move(snapshot.mined_blocks),
+                          snapshot.recommended_fees);
         }, Qt::QueuedConnection);
     });
     m_worker->moveToThread(m_worker_thread);
@@ -361,8 +365,20 @@ QHash<int, QByteArray> MempoolBlocksModel::roleNames() const
     };
 }
 
+QVariantMap MempoolBlocksModel::recommendedFees() const
+{
+    return {
+        {QStringLiteral("fastest"), m_recommended_fees.fastest},
+        {QStringLiteral("halfHour"), m_recommended_fees.half_hour},
+        {QStringLiteral("hour"), m_recommended_fees.hour},
+        {QStringLiteral("economy"), m_recommended_fees.economy},
+        {QStringLiteral("minimum"), m_recommended_fees.minimum},
+    };
+}
+
 void MempoolBlocksModel::applySnapshot(int tip_height, std::vector<mempool_blocks::ProjectedBlock> blocks,
-                                       std::vector<mempool_blocks::MinedBlock> mined_blocks)
+                                       std::vector<mempool_blocks::MinedBlock> mined_blocks,
+                                       const mempool_blocks::RecommendedFees& recommended_fees)
 {
     m_mined_blocks.setBlocks(std::move(mined_blocks));
     const int previous_count{count()};
@@ -395,6 +411,10 @@ void MempoolBlocksModel::applySnapshot(int tip_height, std::vector<mempool_block
     }
 
     if (count() != previous_count) Q_EMIT countChanged();
+    if (recommended_fees != m_recommended_fees) {
+        m_recommended_fees = recommended_fees;
+        Q_EMIT recommendedFeesChanged();
+    }
     if (!m_loaded) {
         m_loaded = true;
         Q_EMIT loadedChanged();

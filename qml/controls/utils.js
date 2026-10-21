@@ -112,6 +112,13 @@ function formatFeeRate(feeRate) {
     return Number(feeRate).toLocaleString(Qt.locale(), 'f', decimals)
 }
 
+// Recommended fee rates as mempool.space shows them: whole numbers from 1
+// sat/vB, otherwise one decimal, or two below 0.1.
+function formatRecommendedFeeRate(feeRate) {
+    var decimals = feeRate >= 1 ? 0 : (feeRate >= 0.1 ? 1 : 2)
+    return Number(feeRate).toLocaleString(Qt.locale(), 'f', decimals)
+}
+
 // Fee totals in BTC with two or three decimals, or as many as needed below
 // 0.001 BTC.
 function formatBlockFees(satoshis) {

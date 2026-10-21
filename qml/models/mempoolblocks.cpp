@@ -14,6 +14,7 @@
 #include <cmath>
 #include <limits>
 #include <numeric>
+#include <optional>
 #include <stdexcept>
 #include <string>
 #include <unordered_map>
@@ -25,12 +26,20 @@ constexpr int64_t BLOCK_MAX_WEIGHT{DEFAULT_BLOCK_MAX_WEIGHT};
 constexpr int64_t BLOCK_RESERVED_WEIGHT{DEFAULT_BLOCK_RESERVED_WEIGHT};
 constexpr int MAX_CONSECUTIVE_FAILURES{1000};
 constexpr int64_t BLOCK_FULL_ENOUGH_WEIGHT_DELTA{4000};
+// Recommended fee rates are rounded to 1 sat/kvB, the smallest non-zero
+// minimum relay fee.
+constexpr double FEE_RATE_INCREMENT{0.001};
+// While not all miners accept fee rates below 1 sat/vB, mempool.space raises
+// the two highest priorities by an offset and to a floor.
+constexpr double PRIORITY_OFFSET{0.5};
+constexpr double MIN_FASTEST_FEE{1.0};
+constexpr double MIN_HALF_HOUR_FEE{0.5};
 
 CAmount ParseAmount(const UniValue& value)
 {
     CAmount amount{0};
     if (!value.isNum() || !ParseFixedPoint(value.getValStr(), 8, &amount)) {
-        throw std::runtime_error("invalid amount in mempool entry");
+        throw std::runtime_error("invalid amount");
     }
     return amount;
 }
@@ -189,6 +198,31 @@ void SetFeeStatistics(ProjectedBlock& block, const std::vector<BlockTx>& block_o
         max_rate,
     };
 }
+double RoundUpToIncrement(double fee_rate)
+{
+    return std::ceil(fee_rate / FEE_RATE_INCREMENT) * FEE_RATE_INCREMENT;
+}
+
+double RoundToIncrement(double fee_rate)
+{
+    return std::round(fee_rate / FEE_RATE_INCREMENT) * FEE_RATE_INCREMENT;
+}
+
+//! mempool.space's optimizeMedianFee(): the rate to get into a block, averaged
+//! with the rate of the priority above it, and at least min_fee. A block less
+//! than half full needs no more than the minimum, and a last block that is not
+//! quite full needs proportionally less.
+double OptimizeMedianFee(const ProjectedBlock& block, bool has_next_block, std::optional<double> previous_fee, double min_fee)
+{
+    const double vsize{static_cast<double>(block.weight) / WITNESS_SCALE_FACTOR};
+    const double use_fee{previous_fee ? (block.median_fee_rate + *previous_fee) / 2 : block.median_fee_rate};
+    if (vsize <= 500'000 || block.median_fee_rate < min_fee) return min_fee;
+    if (vsize <= 950'000 && !has_next_block) {
+        const double multiplier{(vsize - 500'000) / 500'000};
+        return std::max(RoundToIncrement(use_fee * multiplier), min_fee);
+    }
+    return std::max(RoundUpToIncrement(use_fee), min_fee);
+}
 } // namespace
 
 std::vector<MempoolTx> ParseRawMempool(const UniValue& verbose_mempool)
@@ -249,6 +283,35 @@ MinedBlock ParseBlockStats(const UniValue& stats, std::string hash)
     block.fee_range.push_back(stats["maxfeerate"].get_real());
     block.median_fee_rate = block.fee_range[3];
     return block;
+}
+
+CAmount ParseMempoolMinFee(const UniValue& mempool_info)
+{
+    return ParseAmount(mempool_info["mempoolminfee"]);
+}
+
+RecommendedFees RecommendFees(const std::vector<ProjectedBlock>& blocks, CAmount mempool_min_fee)
+{
+    // One sat/kvB is the rounding increment, so the minimum needs no rounding.
+    const double minimum{static_cast<double>(std::max<CAmount>(mempool_min_fee, 1)) / 1000};
+    RecommendedFees fees{minimum, minimum, minimum, minimum, minimum};
+    if (!blocks.empty()) {
+        const double first{OptimizeMedianFee(blocks[0], blocks.size() > 1, std::nullopt, minimum)};
+        const double second{blocks.size() > 1 ? OptimizeMedianFee(blocks[1], blocks.size() > 2, first, minimum) : minimum};
+        const double third{blocks.size() > 2 ? OptimizeMedianFee(blocks[2], blocks.size() > 3, second, minimum) : minimum};
+        fees.economy = std::min(2 * minimum, third);
+        // Higher priorities never pay less.
+        fees.hour = std::max(third, fees.economy);
+        fees.half_hour = std::max(second, fees.hour);
+        fees.fastest = std::max(first, fees.half_hour);
+    }
+    fees.fastest = std::max(fees.fastest + PRIORITY_OFFSET, MIN_FASTEST_FEE);
+    fees.half_hour = std::max(fees.half_hour + PRIORITY_OFFSET / 2, MIN_HALF_HOUR_FEE);
+    // To the nearest sat/kvB.
+    for (double* fee_rate : {&fees.fastest, &fees.half_hour, &fees.hour, &fees.economy, &fees.minimum}) {
+        *fee_rate = std::round(*fee_rate * 1000) / 1000;
+    }
+    return fees;
 }
 
 std::vector<ProjectedBlock> ProjectBlocks(const std::vector<MempoolTx>& txs, size_t max_blocks)

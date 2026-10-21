@@ -64,11 +64,19 @@ TestCase {
             minedBlock(99, 17, 998000),
             minedBlock(98, 130, 400000),
         ])
+        mempoolBlocksModel.recommendedFees = {
+            fastest: 12.846,
+            halfHour: 10.523,
+            hour: 7.662,
+            economy: 3,
+            minimum: 1.5,
+        }
     }
 
     function cleanup() {
         mempoolBlocksModel.setBlocks([])
         minedBlocksModel.setBlocks([])
+        mempoolBlocksModel.recommendedFees = {}
         mempoolBlocksModel.loaded = false
         mempoolBlocksModel.active = false
         nodeModel.mempoolInformationAvailable = true
@@ -356,9 +364,72 @@ TestCase {
         nodeModel.mempoolInformationAvailable = false
         const view = createView()
         compare(findChild(view, "mempoolBlocksStrip").visible, false)
+        compare(findChild(view, "mempoolFeesBox").visible, false)
         compare(mempoolBlocksModel.active, false)
         compare(findChild(view, "mempoolSyncNote").visible, false)
         verify(findChild(view, "mempoolDescription").text.indexOf("not available") >= 0)
+    }
+
+    function feeAt(view, key) {
+        const fee = findChild(view, "mempoolFee_" + key)
+        verify(fee !== null, key)
+        return fee
+    }
+
+    function test_fees_box_shows_each_priority_in_order() {
+        const view = createView()
+        const keys = ["economy", "hour", "halfHour", "fastest"]
+        const labels = ["No Priority", "Low Priority", "Medium Priority", "High Priority"]
+        const rates = ["3", "8", "11", "13"]
+        for (let i = 0; i < keys.length; ++i) {
+            const fee = feeAt(view, keys[i])
+            verify(fee.visible, keys[i])
+            compare(blockText(fee, "mempoolFeeLabel"), labels[i])
+            compare(blockText(fee, "mempoolFeeRateValue"), rates[i])
+            if (i > 0) verify(fee.x > feeAt(view, keys[i - 1]).x, keys[i])
+        }
+    }
+
+    function test_fees_below_one_sat_per_vbyte_keep_decimals() {
+        mempoolBlocksModel.recommendedFees = { fastest: 1, halfHour: 0.5, hour: 0.123, economy: 0.05, minimum: 0.05 }
+        const view = createView()
+        compare(blockText(feeAt(view, "fastest"), "mempoolFeeRateValue"), "1")
+        compare(blockText(feeAt(view, "halfHour"), "mempoolFeeRateValue"),
+                Number(0.5).toLocaleString(Qt.locale(), 'f', 1))
+        compare(blockText(feeAt(view, "hour"), "mempoolFeeRateValue"),
+                Number(0.1).toLocaleString(Qt.locale(), 'f', 1))
+        compare(blockText(feeAt(view, "economy"), "mempoolFeeRateValue"),
+                Number(0.05).toLocaleString(Qt.locale(), 'f', 2))
+    }
+
+    function test_fees_bar_runs_from_minimum_to_high_priority_color() {
+        const view = createView()
+        const box = findChild(view, "mempoolFeesBox")
+        const minimumColor = Theme.color.mempoolFeeColors[Utils.mempoolFeeLevelIndex(1.5)]
+        verify(Qt.colorEqual(box.startColor, minimumColor))
+        verify(Qt.colorEqual(box.endColor, Theme.color.mempoolFeeColors[Utils.mempoolFeeLevelIndex(12.846)]))
+        const noPriority = findChild(view, "mempoolFeesNoPriorityBar")
+        tryVerify(function() { return Qt.colorEqual(noPriority.color, minimumColor) }, 3000)
+    }
+
+    function test_fees_box_shows_placeholders_until_loaded() {
+        mempoolBlocksModel.loaded = false
+        const view = createView()
+        compare(findChild(feeAt(view, "fastest"), "mempoolFeeRate").visible, false)
+        mempoolBlocksModel.loaded = true
+        verify(findChild(feeAt(view, "fastest"), "mempoolFeeRate").visible)
+    }
+
+    function test_narrow_fees_box_leaves_out_no_priority() {
+        const view = createView()
+        verify(feeAt(view, "economy").visible)
+        view.width = 420
+        tryCompare(feeAt(view, "economy"), "visible", false)
+        compare(findChild(view, "mempoolFeesNoPriorityBar").visible, false)
+        const low = feeAt(view, "hour")
+        const high = feeAt(view, "fastest")
+        compare(low.x, 0)
+        compare(high.x + high.width, findChild(view, "mempoolFeesBox").contentWidth)
     }
 
     function test_sync_note_while_syncing() {

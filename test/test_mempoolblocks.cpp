@@ -11,6 +11,7 @@
 #include <univalue.h>
 
 #include <algorithm>
+#include <cmath>
 #include <stdexcept>
 #include <string>
 #include <vector>
@@ -19,6 +20,7 @@ using mempool_blocks::MempoolTx;
 using mempool_blocks::MinedBlock;
 using mempool_blocks::ProjectBlocks;
 using mempool_blocks::ProjectedBlock;
+using mempool_blocks::RecommendedFees;
 
 namespace {
 constexpr int64_t LARGE_TX_VSIZE{100'000};
@@ -71,6 +73,20 @@ UniValue WithChunk(UniValue entry, CAmount chunk_fee, int32_t chunk_weight)
     return entry;
 }
 
+//! A projected block as mempool.space's fee tests describe one.
+ProjectedBlock FeeBlock(double vsize, double median_fee_rate)
+{
+    ProjectedBlock block;
+    block.weight = std::llround(vsize * 4);
+    block.median_fee_rate = median_fee_rate;
+    return block;
+}
+
+std::vector<double> FeeList(const RecommendedFees& fees)
+{
+    return {fees.fastest, fees.half_hour, fees.hour, fees.economy, fees.minimum};
+}
+
 std::vector<int> TxCounts(const std::vector<ProjectedBlock>& blocks)
 {
     std::vector<int> counts;
@@ -96,6 +112,8 @@ private Q_SLOTS:
     void medianIsWeightedAndCountsUnusedSpace();
     void parsesBlockStats();
     void rejectsMalformedBlockStats();
+    void parsesMempoolMinFee();
+    void recommendsFeesLikeMempoolSpace();
 };
 
 void MempoolBlocksTests::parsesVerboseMempool()
@@ -274,6 +292,50 @@ void MempoolBlocksTests::rejectsMalformedBlockStats()
             threw = true;
         }
         QVERIFY(threw);
+    }
+}
+
+void MempoolBlocksTests::parsesMempoolMinFee()
+{
+    UniValue info{UniValue::VOBJ};
+    info.pushKV("mempoolminfee", ValueFromAmount(1'234));
+    QCOMPARE(mempool_blocks::ParseMempoolMinFee(info), CAmount{1'234});
+
+    bool threw{false};
+    try {
+        mempool_blocks::ParseMempoolMinFee(UniValue{UniValue::VOBJ});
+    } catch (const std::exception&) {
+        threw = true;
+    }
+    QVERIFY(threw);
+}
+
+void MempoolBlocksTests::recommendsFeesLikeMempoolSpace()
+{
+    // Expected rates are what mempool.space's getPreciseRecommendedFee()
+    // returns for the same blocks: fastest, half hour, hour, economy, minimum.
+    struct Case {
+        const char* name;
+        std::vector<ProjectedBlock> blocks;
+        CAmount mempool_min_fee;
+        std::vector<double> fees;
+    };
+    const std::vector<Case> cases{
+        // From mempool.space's fee API tests.
+        {"sub-sat", {FeeBlock(997'953.25, 1.0023586640951265), FeeBlock(997'963, 0.6082474226804123), FeeBlock(997'821.25, 0.5200034509958588), FeeBlock(997'875.25, 0.5100003123470801)}, 100, {1.503, 1.056, 0.664, 0.2, 0.1}},
+        {"low fee", {FeeBlock(997'953.25, 1.0023586640951265), FeeBlock(997'963, 1.6082474226804122), FeeBlock(997'821.25, 1.5200034509958589), FeeBlock(997'875.25, 1.5100003123470802)}, 1'000, {1.914, 1.664, 1.414, 1.414, 1}},
+        {"one small block", {FeeBlock(10'000, 1)}, 1'000, {1.5, 1.25, 1, 1, 1}},
+        {"empty", {}, 100, {1, 0.5, 0.1, 0.1, 0.1}},
+        {"busy", {FeeBlock(997'000, 12.3456), FeeBlock(998'000, 8.2), FeeBlock(996'000, 5.05), FeeBlock(999'000, 3)}, 1'500, {12.846, 10.523, 7.662, 3, 1.5}},
+        // A last block that is not quite full lowers its rate.
+        {"partial last block", {FeeBlock(997'000, 12.3456), FeeBlock(700'000, 6)}, 100, {12.846, 3.919, 0.1, 0.1, 0.1}},
+        {"half empty block", {FeeBlock(400'000, 30)}, 100, {1, 0.5, 0.1, 0.1, 0.1}},
+        // The mempool is purging above the blocks' median rates.
+        {"purging", {FeeBlock(997'000, 2), FeeBlock(998'000, 1.5), FeeBlock(996'000, 1.2), FeeBlock(999'000, 1.1)}, 1'800, {2.5, 2.05, 1.8, 1.8, 1.8}},
+    };
+    for (const Case& test : cases) {
+        const std::vector<double> fees{FeeList(mempool_blocks::RecommendFees(test.blocks, test.mempool_min_fee))};
+        QVERIFY2(fees == test.fees, test.name);
     }
 }
 

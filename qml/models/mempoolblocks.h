@@ -67,6 +67,22 @@ struct MinedBlock {
     std::vector<double> fee_range;
 };
 
+//! Fee rates in sat/vB to pay for each priority, from the projected blocks.
+struct RecommendedFees {
+    //! High priority: the next block.
+    double fastest{0.0};
+    //! Medium priority: between the next two blocks.
+    double half_hour{0.0};
+    //! Low priority: between the second and third blocks.
+    double hour{0.0};
+    //! No priority: twice the minimum, or the low priority rate if lower.
+    double economy{0.0};
+    //! The minimum fee rate the mempool accepts.
+    double minimum{0.0};
+
+    friend bool operator==(const RecommendedFees&, const RecommendedFees&) = default;
+};
+
 //! Statistics that ParseBlockStats() reads, to pass to `getblockstats`.
 std::vector<std::string> BlockStatsFields();
 
@@ -77,6 +93,15 @@ std::vector<MempoolTx> ParseRawMempool(const UniValue& verbose_mempool);
 //! Parse the result of `getblockstats` for the block with the given hash.
 //! Throws std::exception subclasses on malformed input.
 MinedBlock ParseBlockStats(const UniValue& stats, std::string hash);
+
+//! Parse the `mempoolminfee` of `getmempoolinfo`, in satoshis per kvB.
+//! Throws std::runtime_error or std::exception subclasses on malformed input.
+CAmount ParseMempoolMinFee(const UniValue& mempool_info);
+
+//! Same recommendations as mempool.space's getPreciseRecommendedFee(), from
+//! the projected blocks and the mempool's minimum fee rate in satoshis per
+//! kvB.
+RecommendedFees RecommendFees(const std::vector<ProjectedBlock>& blocks, CAmount mempool_min_fee);
 
 //! Cut the mempool into blocks in mining order: chunks by descending fee
 //! rate, skipping the rest of a cluster in a block once one of its chunks no

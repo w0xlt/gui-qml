@@ -8,6 +8,7 @@
 #include <qml/models/mempoolblocks.h>
 
 #include <QAbstractListModel>
+#include <QVariantMap>
 
 #include <vector>
 
@@ -65,6 +66,9 @@ class MempoolBlocksModel : public QAbstractListModel
     Q_PROPERTY(bool active READ active WRITE setActive NOTIFY activeChanged)
     Q_PROPERTY(bool loaded READ loaded NOTIFY loadedChanged)
     Q_PROPERTY(int count READ count NOTIFY countChanged)
+    //! Fee rates in sat/vB to pay for each priority, keyed fastest, halfHour,
+    //! hour, economy and minimum.
+    Q_PROPERTY(QVariantMap recommendedFees READ recommendedFees NOTIFY recommendedFeesChanged)
 
 public:
     enum Roles {
@@ -88,6 +92,7 @@ public:
     bool active() const { return m_active; }
     bool loaded() const { return m_loaded; }
     int count() const { return static_cast<int>(m_blocks.size()); }
+    QVariantMap recommendedFees() const;
     //! Recent blocks, refreshed together with the projected ones.
     MinedBlocksModel* minedBlocks() { return &m_mined_blocks; }
 
@@ -97,7 +102,8 @@ public:
     //! snapshot are removed from the front first, so views can animate them
     //! leaving toward the chain.
     void applySnapshot(int tip_height, std::vector<mempool_blocks::ProjectedBlock> blocks,
-                       std::vector<mempool_blocks::MinedBlock> mined_blocks = {});
+                       std::vector<mempool_blocks::MinedBlock> mined_blocks = {},
+                       const mempool_blocks::RecommendedFees& recommended_fees = {});
 
 public Q_SLOTS:
     void setActive(bool active);
@@ -111,6 +117,7 @@ Q_SIGNALS:
     void activeChanged();
     void loadedChanged();
     void countChanged();
+    void recommendedFeesChanged();
 
 private:
     MempoolBlocksWorker* m_worker{nullptr};
@@ -122,6 +129,7 @@ private:
     quint64 m_activation_generation{0};
     int m_tip_height{-1};
     std::vector<mempool_blocks::ProjectedBlock> m_blocks;
+    mempool_blocks::RecommendedFees m_recommended_fees;
     MinedBlocksModel m_mined_blocks;
 };
 

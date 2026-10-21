@@ -90,6 +90,18 @@ Page {
             text: qsTr("Your node is still syncing, so its mempool may not reflect the network yet.")
         }
 
+        MempoolFeesBox {
+            objectName: "mempoolFeesBox"
+            Layout.fillWidth: true
+            Layout.maximumWidth: 600
+            Layout.alignment: Qt.AlignHCenter
+            Layout.leftMargin: 30
+            Layout.rightMargin: 30
+            visible: nodeModel.mempoolInformationAvailable
+            fees: mempoolBlocksModel.recommendedFees
+            loaded: mempoolBlocksModel.loaded
+        }
+
         Item {
             Layout.fillHeight: true
         }

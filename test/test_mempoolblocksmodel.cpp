@@ -79,10 +79,15 @@ int MinedHeight(const MinedBlocksModel& model, int row)
 }
 
 //! Answers the worker's RPCs for a chain of blocks up to the tip and a
-//! one-transaction mempool. Stats of blocks below pruned_below are missing.
+//! one-transaction mempool with a minimum fee rate of 0.1 sat/vB. Stats of blocks below pruned_below are missing.
 UniValue ChainRpc(const std::string& method, const UniValue& params, int tip, int pruned_below = 0)
 {
     if (method == "getrawmempool") return OneTxMempool();
+    if (method == "getmempoolinfo") {
+        UniValue info{UniValue::VOBJ};
+        info.pushKV("mempoolminfee", ValueFromAmount(100));
+        return info;
+    }
     if (method == "getblockhash") {
         const int height{params[0].getInt<int>()};
         if (height < 0 || height > tip) throw std::runtime_error("height out of range");
@@ -121,6 +126,7 @@ private Q_SLOTS:
     void exposesBlockRoles();
     void appliesSnapshotsAsRowChanges();
     void minedBlocksLeaveFromTheFront();
+    void exposesRecommendedFees();
     void exposesMinedBlockRoles();
     void newMinedBlocksArriveAtTheFront();
     void readsEachMinedBlockOnce();
@@ -187,6 +193,25 @@ void MempoolBlocksModelTests::appliesSnapshotsAsRowChanges()
     QCOMPARE(loaded.size(), 1);
     QCOMPARE(inserted.size(), 1);
     QCOMPARE(removed.size(), 1);
+}
+
+void MempoolBlocksModelTests::exposesRecommendedFees()
+{
+    MockNode node;
+    MempoolBlocksModel model{node};
+    QSignalSpy changed{&model, &MempoolBlocksModel::recommendedFeesChanged};
+    const mempool_blocks::RecommendedFees fees{.fastest = 12, .half_hour = 8.5, .hour = 5, .economy = 2, .minimum = 1};
+    model.applySnapshot(100, {Block(1)}, {}, fees);
+    QCOMPARE(changed.size(), 1);
+    const QVariantMap map{model.recommendedFees()};
+    QCOMPARE(map.value(QStringLiteral("fastest")).toDouble(), 12.0);
+    QCOMPARE(map.value(QStringLiteral("halfHour")).toDouble(), 8.5);
+    QCOMPARE(map.value(QStringLiteral("hour")).toDouble(), 5.0);
+    QCOMPARE(map.value(QStringLiteral("economy")).toDouble(), 2.0);
+    QCOMPARE(map.value(QStringLiteral("minimum")).toDouble(), 1.0);
+
+    model.applySnapshot(100, {Block(2)}, {}, fees);
+    QCOMPARE(changed.size(), 1);
 }
 
 void MempoolBlocksModelTests::minedBlocksLeaveFromTheFront()
@@ -362,6 +387,8 @@ void MempoolBlocksModelTests::fetchesOffGuiThreadOnlyWhileActiveAfterStart()
     QVERIFY(model.loaded());
     QCOMPARE(RowTxCount(model, 0), 1);
     QCOMPARE(model.data(model.index(0), MempoolBlocksModel::HeightRole).toInt(), 101);
+    QCOMPARE(model.recommendedFees().value(QStringLiteral("fastest")).toDouble(), 1.0);
+    QCOMPARE(model.recommendedFees().value(QStringLiteral("minimum")).toDouble(), 0.1);
     QTRY_VERIFY_WITH_TIMEOUT(calls.load() >= 3, ASYNC_TIMEOUT_MS);
     QVERIFY(!fetched_on_gui_thread.load());
     QVERIFY(!unexpected_request.load());
