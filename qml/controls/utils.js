@@ -112,6 +112,57 @@ function formatFeeRate(feeRate) {
     return Number(feeRate).toLocaleString(Qt.locale(), 'f', decimals)
 }
 
+var durationUnitSeconds = {
+    year: 31536000, month: 2592000, week: 604800, day: 86400, hour: 3600, minute: 60, second: 1,
+}
+// Most of a unit shown before the next larger one is used instead.
+var durationUnitLimits = { year: 100, month: 18, week: 12, day: 31, hour: 48, minute: 90, second: 90 }
+
+function formatDurationUnit(value, unit, fractionDigits) {
+    var number = Number(value).toLocaleString(Qt.locale(), 'f', value % 1 === 0 ? 0 : fractionDigits)
+    var one = value === 1
+    switch (unit) {
+    case "year": return one ? qsTr("1 year") : qsTr("%1 years").arg(number)
+    case "month": return one ? qsTr("1 month") : qsTr("%1 months").arg(number)
+    case "week": return one ? qsTr("1 week") : qsTr("%1 weeks").arg(number)
+    case "day": return one ? qsTr("1 day") : qsTr("%1 days").arg(number)
+    case "hour": return one ? qsTr("1 hour") : qsTr("%1 hours").arg(number)
+    case "minute": return one ? qsTr("1 minute") : qsTr("%1 minutes").arg(number)
+    }
+    return one ? qsTr("1 second") : qsTr("%1 seconds").arg(number)
+}
+
+// Durations as mempool.space writes them, e.g. "9.2 minutes", or with until,
+// "In ~3 days". Options, as in its TimeService.calculate():
+// - precision: use up to this many smaller units while their count stays
+//   small, e.g. "In ~36 hours" rather than "In ~1 day".
+// - numUnits: how many units to write, e.g. 2 for "In ~3 years, 165 days".
+// - units: the units to use, largest first.
+// - fractionDigits: decimals of the last unit, e.g. 1 for "9.2 minutes".
+function formatDuration(seconds, until, options) {
+    options = options || {}
+    var units = options.units || ["year", "month", "week", "day", "hour", "minute", "second"]
+    var precision = options.precision || 0
+    var numUnits = until ? (options.numUnits || 1) : 1
+    var factor = Math.pow(10, options.fractionDigits || 0)
+    if (until && seconds < 60) seconds = 60
+    var parts = []
+    for (var i = 0; i < units.length && parts.length < numUnits; ++i) {
+        var unit = units[i]
+        var shownUnit = units[Math.min(units.length - 1, i + precision)]
+        if (Math.round(seconds / durationUnitSeconds[shownUnit]) > durationUnitLimits[shownUnit]) shownUnit = unit
+        var count = Math.floor(seconds / durationUnitSeconds[unit])
+        if (shownUnit === units[units.length - 1]) count = Math.max(1, count)
+        if (count <= 0) continue
+        var scaled = seconds / durationUnitSeconds[shownUnit] * factor
+        var value = (until ? Math.floor(scaled) : Math.round(scaled)) / factor
+        parts.push(formatDurationUnit(value, shownUnit, options.fractionDigits || 0))
+        seconds -= value * durationUnitSeconds[shownUnit]
+    }
+    var text = parts.join(", ")
+    return until ? qsTr("In ~%1").arg(text) : text
+}
+
 // Recommended fee rates as mempool.space shows them: whole numbers from 1
 // sat/vB, otherwise one decimal, or two below 0.1.
 function formatRecommendedFeeRate(feeRate) {

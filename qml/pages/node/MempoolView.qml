@@ -48,62 +48,103 @@ Page {
         if (root.ownsMempoolBlocksActivity) mempoolBlocksModel.active = false
     }
 
-    ColumnLayout {
+    Flickable {
+        id: scroll
+        objectName: "mempoolScroll"
         anchors.fill: parent
-        anchors.topMargin: 30
-        anchors.bottomMargin: 30
-        spacing: 20
-
-        // Edge to edge, so the divider is centered on the page and the
-        // blocks run off the side of the window.
-        MempoolBlocksStrip {
-            id: strip
-            objectName: "mempoolBlocksStrip"
-            Layout.fillWidth: true
-            Layout.topMargin: 10
-            Layout.preferredHeight: implicitHeight
-            visible: nodeModel.mempoolInformationAvailable
-            model: mempoolBlocksModel
-            minedModel: minedBlocksModel
-            loaded: mempoolBlocksModel.loaded
-            network: chainModel.networkName
+        contentWidth: width
+        contentHeight: content.implicitHeight + 60
+        boundsBehavior: Flickable.StopAtBounds
+        interactive: contentHeight > height
+        clip: true
+        ScrollBar.vertical: ScrollBar {
+            policy: scroll.interactive ? ScrollBar.AsNeeded : ScrollBar.AlwaysOff
         }
 
-        CoreText {
-            objectName: "mempoolDescription"
-            Layout.fillWidth: true
-            Layout.leftMargin: 30
-            Layout.rightMargin: 30
-            color: Theme.color.neutral7
-            text: nodeModel.mempoolInformationAvailable
-                ? qsTr("Left of the line, transactions waiting in your node's mempool, grouped into the blocks they would most likely be mined in next. Right of the line, the latest blocks in your node's chain.")
-                : qsTr("Mempool information is not available while the node only relays blocks.")
-        }
+        ColumnLayout {
+            id: content
+            y: 30
+            width: scroll.width
+            spacing: 20
 
-        CoreText {
-            objectName: "mempoolSyncNote"
-            Layout.fillWidth: true
-            Layout.leftMargin: 30
-            Layout.rightMargin: 30
-            visible: nodeModel.mempoolInformationAvailable && !nodeModel.initialSyncComplete
-            color: Theme.color.neutral7
-            text: qsTr("Your node is still syncing, so its mempool may not reflect the network yet.")
-        }
+            // Edge to edge, so the divider is centered on the page and the
+            // blocks run off the side of the window.
+            MempoolBlocksStrip {
+                id: strip
+                objectName: "mempoolBlocksStrip"
+                Layout.fillWidth: true
+                Layout.topMargin: 10
+                Layout.preferredHeight: implicitHeight
+                visible: nodeModel.mempoolInformationAvailable
+                model: mempoolBlocksModel
+                minedModel: minedBlocksModel
+                loaded: mempoolBlocksModel.loaded
+                network: chainModel.networkName
+            }
 
-        MempoolFeesBox {
-            objectName: "mempoolFeesBox"
-            Layout.fillWidth: true
-            Layout.maximumWidth: 600
-            Layout.alignment: Qt.AlignHCenter
-            Layout.leftMargin: 30
-            Layout.rightMargin: 30
-            visible: nodeModel.mempoolInformationAvailable
-            fees: mempoolBlocksModel.recommendedFees
-            loaded: mempoolBlocksModel.loaded
-        }
+            CoreText {
+                objectName: "mempoolDescription"
+                Layout.fillWidth: true
+                Layout.leftMargin: 30
+                Layout.rightMargin: 30
+                color: Theme.color.neutral7
+                text: nodeModel.mempoolInformationAvailable
+                    ? qsTr("Left of the line, transactions waiting in your node's mempool, grouped into the blocks they would most likely be mined in next. Right of the line, the latest blocks in your node's chain.")
+                    : qsTr("Mempool information is not available while the node only relays blocks.")
+            }
 
-        Item {
-            Layout.fillHeight: true
+            CoreText {
+                objectName: "mempoolSyncNote"
+                Layout.fillWidth: true
+                Layout.leftMargin: 30
+                Layout.rightMargin: 30
+                visible: nodeModel.mempoolInformationAvailable && !nodeModel.initialSyncComplete
+                color: Theme.color.neutral7
+                text: qsTr("Your node is still syncing, so its mempool may not reflect the network yet.")
+            }
+
+            // Side by side when there is room, like mempool.space's dashboard.
+            GridLayout {
+                id: cards
+                Layout.fillWidth: true
+                Layout.maximumWidth: 2 * 600 + columnSpacing
+                Layout.alignment: Qt.AlignHCenter
+                Layout.leftMargin: 30
+                Layout.rightMargin: 30
+                visible: nodeModel.mempoolInformationAvailable
+                columns: root.width - 60 >= 700 ? 2 : 1
+                columnSpacing: 20
+                rowSpacing: 20
+                // Side by side, the cards are as tall as the taller one.
+                readonly property real cardHeight: columns > 1
+                    ? Math.max(feesBox.cardImplicitHeight, difficultyBox.cardImplicitHeight) : 0
+
+                MempoolFeesBox {
+                    id: feesBox
+                    objectName: "mempoolFeesBox"
+                    Layout.fillWidth: true
+                    Layout.preferredWidth: 1
+                    Layout.maximumWidth: 600
+                    Layout.alignment: Qt.AlignHCenter | Qt.AlignTop
+                    fees: mempoolBlocksModel.recommendedFees
+                    loaded: mempoolBlocksModel.loaded
+                    minimumCardHeight: cards.cardHeight
+                }
+
+                MempoolDifficultyBox {
+                    id: difficultyBox
+                    objectName: "mempoolDifficultyBox"
+                    Layout.fillWidth: true
+                    Layout.preferredWidth: 1
+                    Layout.maximumWidth: 600
+                    Layout.alignment: Qt.AlignHCenter | Qt.AlignTop
+                    adjustment: mempoolBlocksModel.difficultyAdjustment
+                    halving: mempoolBlocksModel.halving
+                    loaded: mempoolBlocksModel.loaded
+                    pulseStep: strip.pulseStep
+                    minimumCardHeight: cards.cardHeight
+                }
+            }
         }
     }
 }

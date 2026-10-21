@@ -71,12 +71,45 @@ TestCase {
             economy: 3,
             minimum: 1.5,
         }
+        mempoolBlocksModel.difficultyAdjustment = difficultyAt(1338.0916666666667)
+        mempoolBlocksModel.halving = halvingIn(9973)
+    }
+
+    // Block 830027, from mempool.space's difficulty adjustment tests: 1,451
+    // blocks into the period, with expectedBlocks expected by now.
+    readonly property real estimatesTime: 1707691381000
+
+    function difficultyAt(expectedBlocks) {
+        return {
+            now: estimatesTime,
+            progressPercent: 71.97420634920636,
+            difficultyChange: 8.512745140778843,
+            estimatedRetargetDate: estimatesTime + 312620715,
+            remainingBlocks: 565,
+            previousRetarget: 7.333505241141637,
+            nextRetargetHeight: 830592,
+            timeAvg: 553311,
+            adjustedTimeAvg: 553311,
+            expectedBlocks: expectedBlocks,
+        }
+    }
+
+    function halvingIn(blocks) {
+        return {
+            now: estimatesTime,
+            remainingBlocks: blocks,
+            nextSubsidy: 312500000,
+            progressPercent: (210000 - blocks) / 2100,
+            estimatedDate: estimatesTime + blocks * 600000,
+        }
     }
 
     function cleanup() {
         mempoolBlocksModel.setBlocks([])
         minedBlocksModel.setBlocks([])
         mempoolBlocksModel.recommendedFees = {}
+        mempoolBlocksModel.difficultyAdjustment = {}
+        mempoolBlocksModel.halving = {}
         mempoolBlocksModel.loaded = false
         mempoolBlocksModel.active = false
         nodeModel.mempoolInformationAvailable = true
@@ -89,6 +122,9 @@ TestCase {
         const list = findChild(view, "mempoolBlocksView")
         verify(list !== null)
         tryCompare(list, "count", mempoolBlocksModel.count)
+        // The cards get their width once the layout is polished.
+        const fees = findChild(view, "mempoolFeesBox")
+        if (fees.visible) tryVerify(function() { return fees.width > 0 })
         return view
     }
 
@@ -365,6 +401,7 @@ TestCase {
         const view = createView()
         compare(findChild(view, "mempoolBlocksStrip").visible, false)
         compare(findChild(view, "mempoolFeesBox").visible, false)
+        compare(findChild(view, "mempoolDifficultyBox").visible, false)
         compare(mempoolBlocksModel.active, false)
         compare(findChild(view, "mempoolSyncNote").visible, false)
         verify(findChild(view, "mempoolDescription").text.indexOf("not available") >= 0)
@@ -430,6 +467,146 @@ TestCase {
         const high = feeAt(view, "fastest")
         compare(low.x, 0)
         compare(high.x + high.width, findChild(view, "mempoolFeesBox").contentWidth)
+    }
+
+    function difficultyStat(view, index, name) {
+        const box = findChild(view, "mempoolDifficultyBox")
+        const stats = []
+        const collect = function(item) {
+            for (let i = 0; i < item.children.length; ++i) {
+                const child = item.children[i]
+                if (child.objectName === "mempoolDifficultyStat") stats.push(child)
+                else collect(child)
+            }
+        }
+        collect(box)
+        compare(stats.length, 3)
+        return findChild(stats[index], name).text
+    }
+
+    function shapesWithStatus(box, status) {
+        return box.shapes.filter(function(shape) { return shape.status === status })
+    }
+
+    function test_durations_read_like_mempool_space() {
+        compare(Utils.formatDuration(553.311, false, { fractionDigits: 1 }),
+                Number(9.2).toLocaleString(Qt.locale(), 'f', 1) + " minutes")
+        compare(Utils.formatDuration(312620.715, true, { precision: 1 }), "In ~3 days")
+        compare(Utils.formatDuration(36 * 3600, true, { precision: 1 }), "In ~36 hours")
+        compare(Utils.formatDuration(600, true, { precision: 1 }), "In ~10 minutes")
+        compare(Utils.formatDuration(3 * 31536000 + 165 * 86400 + 3600, true,
+                                     { numUnits: 2, units: ["year", "day", "hour", "minute"] }),
+                "In ~3 years, 165 days")
+    }
+
+    function test_difficulty_box_shows_the_retarget_estimate() {
+        const view = createView()
+        const box = findChild(view, "mempoolDifficultyBox")
+        compare(box.mode, "difficulty")
+        compare(difficultyStat(view, 0, "mempoolDifficultyValue"),
+                "~" + Number(9.2).toLocaleString(Qt.locale(), 'f', 1) + " minutes")
+        compare(difficultyStat(view, 0, "mempoolDifficultyLabel"), "Average block time")
+        compare(difficultyStat(view, 1, "mempoolDifficultyValue"), Number(8.51).toLocaleString(Qt.locale(), 'f', 2) + " %")
+        verify(difficultyStat(view, 1, "mempoolDifficultyLabel").indexOf(Number(7.33).toLocaleString(Qt.locale(), 'f', 2)) >= 0)
+        compare(difficultyStat(view, 2, "mempoolDifficultyValue"), "In ~3 days")
+        // Within about 4 weeks of blocks, with the time of day.
+        const retarget = new Date(estimatesTime + 312620715)
+        compare(difficultyStat(view, 2, "mempoolDifficultyLabel"),
+                retarget.toLocaleDateString(Qt.locale(), "MMMM d") + ", "
+                + retarget.toLocaleTimeString(Qt.locale(), Locale.ShortFormat))
+
+        mempoolBlocksModel.difficultyAdjustment = Object.assign(difficultyAt(100), { remainingBlocks: 1900 })
+        compare(difficultyStat(view, 2, "mempoolDifficultyLabel"),
+                new Date(estimatesTime + 312620715).toLocaleDateString(Qt.locale(), "MMMM d"))
+    }
+
+    function test_difficulty_grid_marks_blocks_ahead_of_schedule() {
+        const view = createView()
+        const box = findChild(view, "mempoolDifficultyBox")
+        verify(findChild(view, "mempoolDifficultyGrid").visible)
+        compare(box.currentIndex, 1451)
+        compare(box.expectedIndex, 1337)
+        verify(shapesWithStatus(box, "mined").length > 0)
+        verify(shapesWithStatus(box, "ahead").length > 0)
+        compare(shapesWithStatus(box, "behind").length, 0)
+        compare(shapesWithStatus(box, "next").length, 1)
+        compare(box.describeBlock(0), "1338 blocks expected")
+        compare(box.describeBlock(1400), "113 blocks ahead")
+        compare(box.describeBlock(1452), "Next block")
+        compare(box.describeBlock(2000), "565 blocks remaining")
+    }
+
+    function test_difficulty_grid_marks_blocks_behind_schedule() {
+        mempoolBlocksModel.difficultyAdjustment = difficultyAt(1500.5)
+        const view = createView()
+        const box = findChild(view, "mempoolDifficultyBox")
+        compare(shapesWithStatus(box, "ahead").length, 0)
+        verify(shapesWithStatus(box, "behind").length > 0)
+        compare(box.describeBlock(0), "1451 blocks mined")
+        compare(box.describeBlock(1460), "49 blocks behind")
+
+        // A late next block blinks in pink.
+        box.pulseStep = 30
+        const next = findChild(findChild(view, "mempoolDifficultyShape_next"), "mempoolDifficultyCell")
+        verify(Qt.colorEqual(next.color, Theme.color.mempoolProgressNextBehind))
+        box.pulseStep = 0
+        verify(Qt.colorEqual(next.color, Theme.color.neutral9))
+    }
+
+    function test_halving_shows_when_it_comes_first() {
+        mempoolBlocksModel.halving = halvingIn(100)
+        const view = createView()
+        const box = findChild(view, "mempoolDifficultyBox")
+        compare(box.mode, "halving")
+        verify(findChild(view, "mempoolHalvingBar").visible)
+        compare(findChild(view, "mempoolDifficultyGrid").visible, false)
+        compare(findChild(view, "mempoolHalvingProgress").text, Number(209900 / 2100).toLocaleString(Qt.locale(), 'f', 2) + "%")
+        compare(difficultyStat(view, 0, "mempoolDifficultyValue"), Utils.formatBlockFees(312500000))
+        compare(difficultyStat(view, 0, "mempoolDifficultyLabel"), "New subsidy")
+        compare(difficultyStat(view, 1, "mempoolDifficultyValue"), "100")
+        compare(difficultyStat(view, 2, "mempoolDifficultyValue"),
+                new Date(estimatesTime + 100 * 600000).toLocaleDateString(Qt.locale(), "MMM d, yyyy"))
+        compare(difficultyStat(view, 2, "mempoolDifficultyLabel"), "In ~16 hours, 40 minutes")
+
+        mouseClick(findChild(view, "mempoolDifficultyMode_difficulty"))
+        compare(box.mode, "difficulty")
+        mempoolBlocksModel.halving = halvingIn(50)
+        compare(box.mode, "difficulty")
+    }
+
+    function test_only_the_halving_shows_without_retargets() {
+        mempoolBlocksModel.difficultyAdjustment = Object.assign(difficultyAt(1338), { retargets: false })
+        const view = createView()
+        const box = findChild(view, "mempoolDifficultyBox")
+        compare(box.mode, "halving")
+        compare(findChild(view, "mempoolDifficultyMode_difficulty").visible, false)
+    }
+
+    function test_cards_line_up_side_by_side() {
+        const view = createView()
+        const fees = findChild(view, "mempoolFeesBox")
+        const difficulty = findChild(view, "mempoolDifficultyBox")
+        tryCompare(fees, "height", difficulty.height)
+        view.width = 600
+        tryVerify(function() { return fees.height < difficulty.height })
+    }
+
+    function test_estimates_wait_for_the_node_to_sync() {
+        mempoolBlocksModel.difficultyAdjustment = {}
+        mempoolBlocksModel.halving = {}
+        const view = createView()
+        verify(findChild(view, "mempoolDifficultyUnavailable").visible)
+        compare(findChild(view, "mempoolDifficultyGrid").visible, false)
+    }
+
+    function test_cards_sit_side_by_side_when_there_is_room() {
+        const view = createView()
+        const fees = findChild(view, "mempoolFeesBox")
+        const difficulty = findChild(view, "mempoolDifficultyBox")
+        tryVerify(function() { return fees.y === difficulty.y && difficulty.x > fees.x + fees.width })
+        compare(fees.width, difficulty.width)
+        view.width = 600
+        tryVerify(function() { return difficulty.y > fees.y + fees.height })
     }
 
     function test_sync_note_while_syncing() {

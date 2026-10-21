@@ -68,6 +68,13 @@ Control {
         required property color mempoolMinedBlockEmpty
         required property var mempoolMinedBlockFills
         required property var mempoolFeeColors
+        required property color mempoolProgressEmpty
+        required property color mempoolProgressStart
+        required property color mempoolProgressEnd
+        required property color mempoolProgressAhead
+        required property color mempoolProgressBehind
+        required property color mempoolProgressNext
+        required property color mempoolProgressNextBehind
     }
 
     component ImageSet: QtObject {
@@ -137,6 +144,13 @@ Control {
         mempoolMinedBlockEmpty: "#272F4E"
         mempoolMinedBlockFills: root.mempoolMinedBlockFills
         mempoolFeeColors: root.mempoolFeeColors
+        mempoolProgressEmpty: "#272F4E"
+        mempoolProgressStart: "#007CFA"
+        mempoolProgressEnd: "#9339F4"
+        mempoolProgressAhead: "#0AAB2F"
+        mempoolProgressBehind: "#FF3D00"
+        mempoolProgressNext: "#2D3348"
+        mempoolProgressNextBehind: "#D81B60"
     }
 
     ColorSet {
@@ -183,6 +197,13 @@ Control {
         mempoolMinedBlockEmpty: "#7E8CA9"
         mempoolMinedBlockFills: root.mempoolMinedBlockFills
         mempoolFeeColors: root.mempoolFeeColors
+        mempoolProgressEmpty: "#DADCE1"
+        mempoolProgressStart: "#007CFA"
+        mempoolProgressEnd: "#9339F4"
+        mempoolProgressAhead: "#0AAB2F"
+        mempoolProgressBehind: "#FF3D00"
+        mempoolProgressNext: "#B6BDCB"
+        mempoolProgressNextBehind: "#D81B60"
     }
 
     ImageSet {

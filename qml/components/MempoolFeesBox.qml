@@ -15,6 +15,10 @@ Column {
     // Fee rates in sat/vB, keyed fastest, halfHour, hour, economy and minimum.
     property var fees: ({})
     property bool loaded: false
+    // Height the card is at least, e.g. to line up with a card beside it.
+    // Its content stays centered.
+    property real minimumCardHeight: 0
+    readonly property real cardImplicitHeight: card.contentItem.implicitHeight + 40
 
     readonly property real contentWidth: card.availableWidth
     // Too narrow for four columns, so No Priority is left out.
@@ -64,6 +68,8 @@ Column {
         id: card
         width: parent.width
         padding: 20
+        topPadding: 20 + Math.max(0, root.minimumCardHeight - root.cardImplicitHeight) / 2
+        bottomPadding: topPadding
 
         background: Rectangle {
             radius: 10

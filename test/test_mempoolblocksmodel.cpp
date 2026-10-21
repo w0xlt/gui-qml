@@ -10,6 +10,7 @@
 #include <core_io.h>
 #include <qml/models/mempoolblocksmodel.h>
 #include <univalue.h>
+#include <util/time.h>
 
 #include <atomic>
 #include <stdexcept>
@@ -73,12 +74,18 @@ MinedBlock Mined(int height, const std::string& fork = "")
     return block;
 }
 
+int64_t ChainTime(int height)
+{
+    return 1'700'000'000 + int64_t{height} * 600;
+}
+
 int MinedHeight(const MinedBlocksModel& model, int row)
 {
     return model.data(model.index(row), MinedBlocksModel::HeightRole).toInt();
 }
 
-//! Answers the worker's RPCs for a chain of blocks up to the tip and a
+//! Answers the worker's RPCs for a chain of blocks up to the tip, one every 10
+//! minutes with the difficulty rising by half each retarget, and a
 //! one-transaction mempool with a minimum fee rate of 0.1 sat/vB. Stats of blocks below pruned_below are missing.
 UniValue ChainRpc(const std::string& method, const UniValue& params, int tip, int pruned_below = 0)
 {
@@ -92,6 +99,13 @@ UniValue ChainRpc(const std::string& method, const UniValue& params, int tip, in
         const int height{params[0].getInt<int>()};
         if (height < 0 || height > tip) throw std::runtime_error("height out of range");
         return UniValue{"hash" + std::to_string(height)};
+    }
+    if (method == "getblockheader") {
+        const int height{std::stoi(params[0].get_str().substr(4))};
+        UniValue header{UniValue::VOBJ};
+        header.pushKV("time", ChainTime(height));
+        header.pushKV("difficulty", 1 + 0.5 * (height / difficulty_adjustment::RETARGET_INTERVAL));
+        return header;
     }
     if (method == "getblockstats") {
         const int height{std::stoi(params[0].get_str().substr(4))};
@@ -131,6 +145,9 @@ private Q_SLOTS:
     void newMinedBlocksArriveAtTheFront();
     void readsEachMinedBlockOnce();
     void showsMinedBlocksUpToPrunedOnes();
+    void estimatesRetargetAndHalvingFromHeaders();
+    void noEstimatesWhileSyncing();
+    void reportsWhetherTheChainRetargets();
     void fetchesOffGuiThreadOnlyWhileActiveAfterStart();
     void rpcErrorsKeepPreviousBlocks();
     void neverFetchesAfterShutdown();
@@ -327,7 +344,7 @@ void MempoolBlocksModelTests::readsEachMinedBlockOnce()
         return ChainRpc(method, params, tip);
     };
 
-    MempoolBlocksModel model{node, TEST_REFRESH_INTERVAL_MS};
+    MempoolBlocksModel model{node, {}, TEST_REFRESH_INTERVAL_MS};
     const MinedBlocksModel& mined{*model.minedBlocks()};
     model.setActive(true);
     model.start();
@@ -353,12 +370,93 @@ void MempoolBlocksModelTests::showsMinedBlocksUpToPrunedOnes()
         return ChainRpc(method, params, /*tip=*/100, /*pruned_below=*/97);
     };
 
-    MempoolBlocksModel model{node, TEST_REFRESH_INTERVAL_MS};
+    MempoolBlocksModel model{node, {}, TEST_REFRESH_INTERVAL_MS};
     model.setActive(true);
     model.start();
     QTRY_COMPARE_WITH_TIMEOUT(model.rowCount(), 1, ASYNC_TIMEOUT_MS);
     QCOMPARE(model.minedBlocks()->rowCount(), 4);
     QCOMPARE(MinedHeight(*model.minedBlocks(), 3), 97);
+}
+
+void MempoolBlocksModelTests::estimatesRetargetAndHalvingFromHeaders()
+{
+    constexpr int TIP{4'100};
+    const int64_t now{ChainTime(TIP) + 300};
+    SetMockTime(now);
+    MockNode node;
+    node.get_num_blocks_fn = [] { return TIP; };
+    node.execute_rpc_fn = [&](const std::string& method, const UniValue& params, const std::string&) {
+        return ChainRpc(method, params, TIP);
+    };
+    const difficulty_adjustment::ChainRules rules{.halving_interval = 150};
+    MempoolBlocksModel model{node, rules, TEST_REFRESH_INTERVAL_MS};
+    model.setActive(true);
+    model.start();
+    QTRY_VERIFY_WITH_TIMEOUT(!model.difficultyAdjustment().isEmpty(), ASYNC_TIMEOUT_MS);
+    SetMockTime(0);
+
+    // The period started at 4032 and the one before at 2016, with the
+    // difficulty going from 1.5 to 2.
+    const difficulty_adjustment::EpochState epoch{
+        .tip_height = TIP,
+        .tip_time = ChainTime(TIP),
+        .epoch_start_time = ChainTime(4'032),
+        .previous_retarget = 2 / 1.5 * 100 - 100,
+        .quarter_epoch_time = ChainTime(TIP - 503),
+    };
+    const difficulty_adjustment::DifficultyAdjustment expected{difficulty_adjustment::Estimate(epoch, now, rules)};
+    const QVariantMap adjustment{model.difficultyAdjustment()};
+    QCOMPARE(adjustment.value(QStringLiteral("now")).toLongLong(), now * 1000);
+    QCOMPARE(adjustment.value(QStringLiteral("remainingBlocks")).toInt(), 1'948);
+    QCOMPARE(adjustment.value(QStringLiteral("nextRetargetHeight")).toInt(), 6'048);
+    QCOMPARE(adjustment.value(QStringLiteral("previousRetarget")).toDouble(), epoch.previous_retarget);
+    QCOMPARE(adjustment.value(QStringLiteral("difficultyChange")).toDouble(), expected.difficulty_change);
+    QCOMPARE(adjustment.value(QStringLiteral("estimatedRetargetDate")).toLongLong(), expected.estimated_retarget_date);
+    QCOMPARE(adjustment.value(QStringLiteral("timeAvg")).toLongLong(), expected.time_avg);
+
+    const QVariantMap halving{model.halving()};
+    QCOMPARE(halving.value(QStringLiteral("remainingBlocks")).toInt(), 100);
+    QCOMPARE(halving.value(QStringLiteral("nextSubsidy")).toLongLong(), qint64{50 * COIN} >> 28);
+    QCOMPARE(halving.value(QStringLiteral("estimatedDate")).toLongLong(), (now + 100 * 600) * 1000);
+}
+
+void MempoolBlocksModelTests::noEstimatesWhileSyncing()
+{
+    MockNode node;
+    std::atomic<int> header_calls{0};
+    node.get_num_blocks_fn = [] { return 100; };
+    node.is_initial_block_download_fn = [] { return true; };
+    node.execute_rpc_fn = [&](const std::string& method, const UniValue& params, const std::string&) {
+        if (method == "getblockheader") ++header_calls;
+        return ChainRpc(method, params, /*tip=*/100);
+    };
+    MempoolBlocksModel model{node, {}, TEST_REFRESH_INTERVAL_MS};
+    model.setActive(true);
+    model.start();
+    QTRY_VERIFY_WITH_TIMEOUT(model.loaded(), ASYNC_TIMEOUT_MS);
+    QTest::qWait(TEST_REFRESH_INTERVAL_MS * 3);
+    QVERIFY(model.difficultyAdjustment().isEmpty());
+    QVERIFY(model.halving().isEmpty());
+    QCOMPARE(header_calls.load(), 0);
+}
+
+void MempoolBlocksModelTests::reportsWhetherTheChainRetargets()
+{
+    MockNode node;
+    for (const bool retargets : {true, false}) {
+        MempoolBlocksModel model{node, {.retargets = retargets}};
+        QSignalSpy changed{&model, &MempoolBlocksModel::chainEstimatesChanged};
+        model.setChainEstimates(1'700'000'000, difficulty_adjustment::DifficultyAdjustment{}, difficulty_adjustment::Halving{});
+        QCOMPARE(changed.size(), 1);
+        QCOMPARE(model.difficultyAdjustment().value(QStringLiteral("retargets")).toBool(), retargets);
+        QCOMPARE(model.difficultyAdjustment().value(QStringLiteral("now")).toLongLong(), qint64{1'700'000'000'000});
+
+        model.setChainEstimates(1'700'000'000, std::nullopt, std::nullopt);
+        QCOMPARE(changed.size(), 2);
+        QVERIFY(model.difficultyAdjustment().isEmpty());
+        model.setChainEstimates(1'700'000'000, std::nullopt, std::nullopt);
+        QCOMPARE(changed.size(), 2);
+    }
 }
 
 void MempoolBlocksModelTests::fetchesOffGuiThreadOnlyWhileActiveAfterStart()
@@ -376,7 +474,7 @@ void MempoolBlocksModelTests::fetchesOffGuiThreadOnlyWhileActiveAfterStart()
         return ChainRpc(method, params, /*tip=*/100);
     };
 
-    MempoolBlocksModel model{node, TEST_REFRESH_INTERVAL_MS};
+    MempoolBlocksModel model{node, {}, TEST_REFRESH_INTERVAL_MS};
     model.setActive(true);
     model.refresh();
     QTest::qWait(TEST_REFRESH_INTERVAL_MS * 3);
@@ -419,7 +517,7 @@ void MempoolBlocksModelTests::rpcErrorsKeepPreviousBlocks()
         throw error;
     };
 
-    MempoolBlocksModel model{node, TEST_REFRESH_INTERVAL_MS};
+    MempoolBlocksModel model{node, {}, TEST_REFRESH_INTERVAL_MS};
     model.setActive(true);
     model.start();
     QTRY_VERIFY_WITH_TIMEOUT(calls.load() >= 4, ASYNC_TIMEOUT_MS);
@@ -436,7 +534,7 @@ void MempoolBlocksModelTests::neverFetchesAfterShutdown()
         return ChainRpc(method, params, /*tip=*/100);
     };
 
-    MempoolBlocksModel model{node, TEST_REFRESH_INTERVAL_MS};
+    MempoolBlocksModel model{node, {}, TEST_REFRESH_INTERVAL_MS};
     model.setActive(true);
     model.start();
     QTRY_VERIFY_WITH_TIMEOUT(calls.load() >= 1, ASYNC_TIMEOUT_MS);

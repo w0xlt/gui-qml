@@ -9,11 +9,14 @@
 #include <interfaces/node.h>
 #include <univalue.h>
 #include <util/threadnames.h>
+#include <util/time.h>
 
 #include <algorithm>
+#include <chrono>
 #include <exception>
 #include <functional>
 #include <iterator>
+#include <optional>
 #include <string>
 #include <utility>
 
@@ -33,6 +36,9 @@ struct MempoolBlocksSnapshot {
     std::vector<mempool_blocks::ProjectedBlock> blocks;
     std::vector<mempool_blocks::MinedBlock> mined_blocks;
     mempool_blocks::RecommendedFees recommended_fees;
+    int64_t now_seconds{0};
+    std::optional<difficulty_adjustment::DifficultyAdjustment> difficulty_adjustment;
+    std::optional<difficulty_adjustment::Halving> halving;
 };
 
 QVariantList FeeRangeList(const std::vector<double>& fee_range)
@@ -51,8 +57,9 @@ class MempoolBlocksWorker : public QObject
 public:
     using PublishFn = std::function<void(MempoolBlocksSnapshot)>;
 
-    MempoolBlocksWorker(interfaces::Node& node, int min_refresh_interval_ms, PublishFn publish)
+    MempoolBlocksWorker(interfaces::Node& node, difficulty_adjustment::ChainRules chain_rules, int min_refresh_interval_ms, PublishFn publish)
         : m_node{node}
+        , m_chain_rules{chain_rules}
         , m_min_refresh_interval_ms{std::max(1, min_refresh_interval_ms)}
         , m_publish{std::move(publish)}
         , m_timer{new QTimer(this)}
@@ -112,8 +119,16 @@ private:
             MempoolBlocksSnapshot snapshot;
             snapshot.generation = m_generation;
             snapshot.tip_height = m_node.getNumBlocks();
-            updateMinedBlocks(snapshot.tip_height);
+            const std::string tip_hash{tipHash(snapshot.tip_height)};
+            updateMinedBlocks(snapshot.tip_height, tip_hash);
             snapshot.mined_blocks = m_mined_blocks;
+            // During sync the tip is too old for the estimates to mean anything.
+            if (!m_node.isInitialBlockDownload()) updateEpoch(snapshot.tip_height, tip_hash);
+            if (m_epoch) {
+                snapshot.now_seconds = TicksSinceEpoch<std::chrono::seconds>(NodeClock::now());
+                snapshot.difficulty_adjustment = difficulty_adjustment::Estimate(*m_epoch, snapshot.now_seconds, m_chain_rules);
+                snapshot.halving = difficulty_adjustment::NextHalving(m_epoch->tip_height, snapshot.now_seconds, m_chain_rules);
+            }
 
             QElapsedTimer mempool_timer;
             mempool_timer.start();
@@ -141,26 +156,68 @@ private:
         return m_node.executeRpc("getblockhash", params, /*uri=*/"").get_str();
     }
 
+    UniValue blockHeader(const std::string& hash)
+    {
+        UniValue params{UniValue::VARR};
+        params.push_back(hash);
+        return m_node.executeRpc("getblockheader", params, /*uri=*/"");
+    }
+
+    //! Hash of the block at the tip height, or empty if it can't be read.
+    std::string tipHash(int tip_height)
+    {
+        if (tip_height < 0) return {};
+        try {
+            return blockHash(tip_height);
+        } catch (const UniValue&) {
+        } catch (const std::exception&) {
+        }
+        return {};
+    }
+
+    //! Read the headers the difficulty estimate starts from when the tip
+    //! changed. Until they are read, there is no estimate.
+    void updateEpoch(int tip_height, const std::string& tip_hash)
+    {
+        using namespace difficulty_adjustment;
+        if (tip_hash.empty() || tip_hash == m_epoch_tip_hash) return;
+        m_epoch.reset();
+        m_epoch_tip_hash.clear();
+        try {
+            EpochState epoch;
+            epoch.tip_height = tip_height;
+            epoch.tip_time = blockHeader(tip_hash)["time"].getInt<int64_t>();
+            const int start_height{tip_height - tip_height % RETARGET_INTERVAL};
+            const UniValue start{blockHeader(blockHash(start_height))};
+            epoch.epoch_start_time = start["time"].getInt<int64_t>();
+            if (start_height >= RETARGET_INTERVAL) {
+                const UniValue previous{blockHeader(blockHash(start_height - RETARGET_INTERVAL))};
+                epoch.previous_retarget = RetargetChange(previous["difficulty"].get_real(), start["difficulty"].get_real());
+            }
+            if (tip_height >= QUARTER_EPOCH_BLOCKS) {
+                epoch.quarter_epoch_time = blockHeader(blockHash(tip_height - QUARTER_EPOCH_BLOCKS))["time"].getInt<int64_t>();
+            }
+            m_epoch = epoch;
+            m_epoch_tip_hash = tip_hash;
+        } catch (const UniValue&) {
+            // RPC errors, e.g. while the node shuts down. The next refresh retries.
+        } catch (const std::exception&) {
+        }
+    }
+
     //! Refresh the recent blocks when the tip changed, reusing the stats of
     //! blocks seen before. Reading stats loads each block and its undo data
     //! from disk, so after a slow refresh the next one waits, e.g. while
     //! blocks connect quickly during sync.
-    void updateMinedBlocks(int tip_height)
+    void updateMinedBlocks(int tip_height, const std::string& tip_hash)
     {
-        if (tip_height < 0) return;
+        if (tip_hash.empty()) return;
         if (m_last_mined_fetch.isValid() && m_last_mined_fetch.elapsed() < m_mined_retry_ms) return;
-        std::string hash;
-        try {
-            hash = blockHash(tip_height);
-        } catch (const UniValue&) {
-            return;
-        } catch (const std::exception&) {
-            return;
-        }
-        if (!m_mined_blocks.empty() && m_mined_blocks.front().hash == hash) return;
+        if (!m_mined_blocks.empty() && m_mined_blocks.front().hash == tip_hash) return;
 
         m_last_mined_fetch.start();
         std::vector<mempool_blocks::MinedBlock> mined_blocks;
+        std::string hash{tip_hash};
         try {
             for (int height = tip_height; height >= 0 && mined_blocks.size() < mempool_blocks::MAX_MINED_BLOCKS; --height) {
                 if (height < tip_height) hash = blockHash(height);
@@ -189,6 +246,7 @@ private:
     }
 
     interfaces::Node& m_node;
+    const difficulty_adjustment::ChainRules m_chain_rules;
     const int m_min_refresh_interval_ms;
     PublishFn m_publish;
     QTimer* m_timer;
@@ -196,6 +254,8 @@ private:
     QElapsedTimer m_last_mined_fetch;
     qint64 m_mined_retry_ms{0};
     std::vector<mempool_blocks::MinedBlock> m_mined_blocks;
+    std::optional<difficulty_adjustment::EpochState> m_epoch;
+    std::string m_epoch_tip_hash;
     bool m_started{false};
     bool m_active{false};
     quint64 m_generation{0};
@@ -294,14 +354,17 @@ void MinedBlocksModel::setBlocks(std::vector<mempool_blocks::MinedBlock> blocks)
     if (count() != previous_count) Q_EMIT countChanged();
 }
 
-MempoolBlocksModel::MempoolBlocksModel(interfaces::Node& node, int min_refresh_interval_ms, QObject* parent)
+MempoolBlocksModel::MempoolBlocksModel(interfaces::Node& node, difficulty_adjustment::ChainRules chain_rules,
+                                       int min_refresh_interval_ms, QObject* parent)
     : QAbstractListModel{parent}
     , m_worker_thread{new QThread(this)}
+    , m_chain_rules{chain_rules}
 {
     m_worker_thread->setObjectName(QStringLiteral("mempool-blocks"));
-    m_worker = new MempoolBlocksWorker(node, min_refresh_interval_ms, [this](MempoolBlocksSnapshot snapshot) {
+    m_worker = new MempoolBlocksWorker(node, chain_rules, min_refresh_interval_ms, [this](MempoolBlocksSnapshot snapshot) {
         QMetaObject::invokeMethod(this, [this, snapshot = std::move(snapshot)]() mutable {
             if (m_stopping || !m_active || snapshot.generation != m_activation_generation) return;
+            setChainEstimates(snapshot.now_seconds, snapshot.difficulty_adjustment, snapshot.halving);
             applySnapshot(snapshot.tip_height, std::move(snapshot.blocks), std::move(snapshot.mined_blocks),
                           snapshot.recommended_fees);
         }, Qt::QueuedConnection);
@@ -374,6 +437,48 @@ QVariantMap MempoolBlocksModel::recommendedFees() const
         {QStringLiteral("economy"), m_recommended_fees.economy},
         {QStringLiteral("minimum"), m_recommended_fees.minimum},
     };
+}
+
+QVariantMap MempoolBlocksModel::difficultyAdjustment() const
+{
+    if (!m_difficulty_adjustment) return {};
+    const difficulty_adjustment::DifficultyAdjustment& adjustment{*m_difficulty_adjustment};
+    return {
+        {QStringLiteral("now"), QVariant::fromValue<qint64>(m_estimates_time * 1000)},
+        {QStringLiteral("retargets"), m_chain_rules.retargets},
+        {QStringLiteral("progressPercent"), adjustment.progress_percent},
+        {QStringLiteral("difficultyChange"), adjustment.difficulty_change},
+        {QStringLiteral("estimatedRetargetDate"), QVariant::fromValue<qint64>(adjustment.estimated_retarget_date)},
+        {QStringLiteral("remainingBlocks"), adjustment.remaining_blocks},
+        {QStringLiteral("previousRetarget"), adjustment.previous_retarget},
+        {QStringLiteral("nextRetargetHeight"), adjustment.next_retarget_height},
+        {QStringLiteral("timeAvg"), QVariant::fromValue<qint64>(adjustment.time_avg)},
+        {QStringLiteral("adjustedTimeAvg"), QVariant::fromValue<qint64>(adjustment.adjusted_time_avg)},
+        {QStringLiteral("expectedBlocks"), adjustment.expected_blocks},
+    };
+}
+
+QVariantMap MempoolBlocksModel::halving() const
+{
+    if (!m_halving) return {};
+    return {
+        {QStringLiteral("now"), QVariant::fromValue<qint64>(m_estimates_time * 1000)},
+        {QStringLiteral("remainingBlocks"), m_halving->remaining_blocks},
+        {QStringLiteral("nextSubsidy"), QVariant::fromValue<qint64>(m_halving->next_subsidy)},
+        {QStringLiteral("progressPercent"), m_halving->progress_percent},
+        {QStringLiteral("estimatedDate"), QVariant::fromValue<qint64>(m_halving->estimated_date)},
+    };
+}
+
+void MempoolBlocksModel::setChainEstimates(int64_t now_seconds,
+                                           std::optional<difficulty_adjustment::DifficultyAdjustment> difficulty_adjustment,
+                                           std::optional<difficulty_adjustment::Halving> halving)
+{
+    if (!difficulty_adjustment && !m_difficulty_adjustment && !halving && !m_halving) return;
+    m_estimates_time = now_seconds;
+    m_difficulty_adjustment = difficulty_adjustment;
+    m_halving = halving;
+    Q_EMIT chainEstimatesChanged();
 }
 
 void MempoolBlocksModel::applySnapshot(int tip_height, std::vector<mempool_blocks::ProjectedBlock> blocks,

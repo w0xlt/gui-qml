@@ -5,11 +5,13 @@
 #ifndef BITCOIN_QML_MODELS_MEMPOOLBLOCKSMODEL_H
 #define BITCOIN_QML_MODELS_MEMPOOLBLOCKSMODEL_H
 
+#include <qml/models/difficultyadjustment.h>
 #include <qml/models/mempoolblocks.h>
 
 #include <QAbstractListModel>
 #include <QVariantMap>
 
+#include <optional>
 #include <vector>
 
 namespace interfaces {
@@ -69,6 +71,11 @@ class MempoolBlocksModel : public QAbstractListModel
     //! Fee rates in sat/vB to pay for each priority, keyed fastest, halfHour,
     //! hour, economy and minimum.
     Q_PROPERTY(QVariantMap recommendedFees READ recommendedFees NOTIFY recommendedFeesChanged)
+    //! Estimates of the next difficulty retarget and halving, with the time
+    //! in milliseconds they were made at as now, and whether the chain
+    //! retargets at all. Empty while the node syncs.
+    Q_PROPERTY(QVariantMap difficultyAdjustment READ difficultyAdjustment NOTIFY chainEstimatesChanged)
+    Q_PROPERTY(QVariantMap halving READ halving NOTIFY chainEstimatesChanged)
 
 public:
     enum Roles {
@@ -82,7 +89,8 @@ public:
         VSizeRole,
     };
 
-    explicit MempoolBlocksModel(interfaces::Node& node, int min_refresh_interval_ms = 2000, QObject* parent = nullptr);
+    explicit MempoolBlocksModel(interfaces::Node& node, difficulty_adjustment::ChainRules chain_rules = {},
+                                int min_refresh_interval_ms = 2000, QObject* parent = nullptr);
     ~MempoolBlocksModel() override;
 
     int rowCount(const QModelIndex& parent = QModelIndex()) const override;
@@ -93,6 +101,8 @@ public:
     bool loaded() const { return m_loaded; }
     int count() const { return static_cast<int>(m_blocks.size()); }
     QVariantMap recommendedFees() const;
+    QVariantMap difficultyAdjustment() const;
+    QVariantMap halving() const;
     //! Recent blocks, refreshed together with the projected ones.
     MinedBlocksModel* minedBlocks() { return &m_mined_blocks; }
 
@@ -104,6 +114,10 @@ public:
     void applySnapshot(int tip_height, std::vector<mempool_blocks::ProjectedBlock> blocks,
                        std::vector<mempool_blocks::MinedBlock> mined_blocks = {},
                        const mempool_blocks::RecommendedFees& recommended_fees = {});
+    //! Apply estimates made at now_seconds, or none.
+    void setChainEstimates(int64_t now_seconds,
+                           std::optional<difficulty_adjustment::DifficultyAdjustment> difficulty_adjustment,
+                           std::optional<difficulty_adjustment::Halving> halving);
 
 public Q_SLOTS:
     void setActive(bool active);
@@ -118,6 +132,7 @@ Q_SIGNALS:
     void loadedChanged();
     void countChanged();
     void recommendedFeesChanged();
+    void chainEstimatesChanged();
 
 private:
     MempoolBlocksWorker* m_worker{nullptr};
@@ -130,6 +145,10 @@ private:
     int m_tip_height{-1};
     std::vector<mempool_blocks::ProjectedBlock> m_blocks;
     mempool_blocks::RecommendedFees m_recommended_fees;
+    const difficulty_adjustment::ChainRules m_chain_rules;
+    int64_t m_estimates_time{0};
+    std::optional<difficulty_adjustment::DifficultyAdjustment> m_difficulty_adjustment;
+    std::optional<difficulty_adjustment::Halving> m_halving;
     MinedBlocksModel m_mined_blocks;
 };
 

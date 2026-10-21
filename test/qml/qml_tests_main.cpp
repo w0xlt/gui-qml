@@ -2959,6 +2959,8 @@ class MockMempoolBlocksModel : public QAbstractListModel
     Q_PROPERTY(bool loaded MEMBER m_loaded NOTIFY loadedChanged)
     Q_PROPERTY(int count READ count NOTIFY countChanged)
     Q_PROPERTY(QVariantMap recommendedFees MEMBER m_recommended_fees NOTIFY recommendedFeesChanged)
+    Q_PROPERTY(QVariantMap difficultyAdjustment MEMBER m_difficulty_adjustment NOTIFY chainEstimatesChanged)
+    Q_PROPERTY(QVariantMap halving MEMBER m_halving NOTIFY chainEstimatesChanged)
 
 public:
     int rowCount(const QModelIndex& parent = QModelIndex()) const override
@@ -3031,11 +3033,14 @@ Q_SIGNALS:
     void loadedChanged();
     void countChanged();
     void recommendedFeesChanged();
+    void chainEstimatesChanged();
 
 private:
     bool m_active{false};
     bool m_loaded{false};
     QVariantMap m_recommended_fees;
+    QVariantMap m_difficulty_adjustment;
+    QVariantMap m_halving;
     QList<QVariantMap> m_blocks;
 };
 

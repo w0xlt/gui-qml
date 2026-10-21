@@ -708,7 +708,7 @@ int QmlGuiMain(int argc, char* argv[])
                      &network_traffic_tower, &NetworkTrafficTower::startSampling);
     shutdown_coordinator.addParticipant(&network_traffic_tower, &NetworkTrafficTower::drained,
                                         [&] { network_traffic_tower.beginShutdown(); });
-    MempoolBlocksModel mempool_blocks_model{*node};
+    MempoolBlocksModel mempool_blocks_model{*node, difficulty_adjustment::RulesFor(Params().GetConsensus())};
     QObject::connect(&node_model, &NodeModel::chainStateReady,
                      &mempool_blocks_model, &MempoolBlocksModel::start);
     QObject::connect(&node_model, &NodeModel::blockTipHeightChanged,

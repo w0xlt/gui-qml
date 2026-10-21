@@ -19,6 +19,7 @@
         <file>components/DesktopNativeMenuBar.qml</file>
         <file>components/MempoolBlock.qml</file>
         <file>components/MempoolBlocksStrip.qml</file>
+        <file>components/MempoolDifficultyBox.qml</file>
         <file>components/MempoolFeesBox.qml</file>
         <file>components/MempoolInformationRows.qml</file>
         <file>components/MenuCommand.qml</file>
