@@ -19,6 +19,7 @@
 #include <QSignalSpy>
 #include <QThread>
 
+using mempool_blocks::MinedBlock;
 using mempool_blocks::ProjectedBlock;
 
 namespace {
@@ -57,6 +58,59 @@ int RowTxCount(const MempoolBlocksModel& model, int row)
 {
     return model.data(model.index(row), MempoolBlocksModel::TransactionCountRole).toInt();
 }
+
+MinedBlock Mined(int height, const std::string& fork = "")
+{
+    MinedBlock block;
+    block.hash = fork + "hash" + std::to_string(height);
+    block.height = height;
+    block.time = 1'700'000'000 + height * 600;
+    block.tx_count = 10;
+    block.total_fees = 5'000;
+    block.weight = 400'000;
+    block.median_fee_rate = 3;
+    block.fee_range = {1, 2, 2.5, 3, 4, 5, 9};
+    return block;
+}
+
+int MinedHeight(const MinedBlocksModel& model, int row)
+{
+    return model.data(model.index(row), MinedBlocksModel::HeightRole).toInt();
+}
+
+//! Answers the worker's RPCs for a chain of blocks up to the tip and a
+//! one-transaction mempool. Stats of blocks below pruned_below are missing.
+UniValue ChainRpc(const std::string& method, const UniValue& params, int tip, int pruned_below = 0)
+{
+    if (method == "getrawmempool") return OneTxMempool();
+    if (method == "getblockhash") {
+        const int height{params[0].getInt<int>()};
+        if (height < 0 || height > tip) throw std::runtime_error("height out of range");
+        return UniValue{"hash" + std::to_string(height)};
+    }
+    if (method == "getblockstats") {
+        const int height{std::stoi(params[0].get_str().substr(4))};
+        if (height < pruned_below) {
+            UniValue error{UniValue::VOBJ};
+            error.pushKV("code", -1);
+            error.pushKV("message", "Block not available (pruned data)");
+            throw error;
+        }
+        UniValue percentiles{UniValue::VARR};
+        for (int fee_rate : {2, 3, 4, 5, 6}) percentiles.push_back(fee_rate);
+        UniValue stats{UniValue::VOBJ};
+        stats.pushKV("height", height);
+        stats.pushKV("time", 1'700'000'000 + height * 600);
+        stats.pushKV("txs", 10);
+        stats.pushKV("totalfee", 5'000);
+        stats.pushKV("total_weight", 400'000);
+        stats.pushKV("feerate_percentiles", std::move(percentiles));
+        stats.pushKV("minfeerate", 1);
+        stats.pushKV("maxfeerate", 9);
+        return stats;
+    }
+    throw std::runtime_error("unexpected method " + method);
+}
 } // namespace
 
 class MempoolBlocksModelTests : public QObject
@@ -67,6 +121,10 @@ private Q_SLOTS:
     void exposesBlockRoles();
     void appliesSnapshotsAsRowChanges();
     void minedBlocksLeaveFromTheFront();
+    void exposesMinedBlockRoles();
+    void newMinedBlocksArriveAtTheFront();
+    void readsEachMinedBlockOnce();
+    void showsMinedBlocksUpToPrunedOnes();
     void fetchesOffGuiThreadOnlyWhileActiveAfterStart();
     void rpcErrorsKeepPreviousBlocks();
     void neverFetchesAfterShutdown();
@@ -165,6 +223,119 @@ void MempoolBlocksModelTests::minedBlocksLeaveFromTheFront()
     QCOMPARE(RowTxCount(model, 0), 8);
 }
 
+void MempoolBlocksModelTests::exposesMinedBlockRoles()
+{
+    MockNode node;
+    MempoolBlocksModel model{node};
+    model.applySnapshot(100, {Block(1)}, {Mined(100), Mined(99)});
+    const MinedBlocksModel& mined{*model.minedBlocks()};
+    QCOMPARE(mined.rowCount(), 2);
+
+    const QModelIndex index{mined.index(0)};
+    QCOMPARE(mined.data(index, MinedBlocksModel::HeightRole).toInt(), 100);
+    QCOMPARE(mined.data(index, MinedBlocksModel::TimeRole).toLongLong(), 1'700'060'000);
+    QCOMPARE(mined.data(index, MinedBlocksModel::MedianFeeRateRole).toDouble(), 3.0);
+    // The range shown starts at the 10th percentile.
+    QCOMPARE(mined.data(index, MinedBlocksModel::MinFeeRateRole).toDouble(), 2.0);
+    QCOMPARE(mined.data(index, MinedBlocksModel::MaxFeeRateRole).toDouble(), 9.0);
+    QCOMPARE(mined.data(index, MinedBlocksModel::FeeRangeRole).toList().size(), 7);
+    QCOMPARE(mined.data(index, MinedBlocksModel::TotalFeesRole).toLongLong(), 5'000);
+    QCOMPARE(mined.data(index, MinedBlocksModel::TransactionCountRole).toInt(), 10);
+    QCOMPARE(mined.data(index, MinedBlocksModel::VSizeRole).toLongLong(), 100'000);
+    QVERIFY(!mined.data(mined.index(2), MinedBlocksModel::HeightRole).isValid());
+    QCOMPARE(mined.roleNames().value(MinedBlocksModel::TimeRole), QByteArray("time"));
+}
+
+void MempoolBlocksModelTests::newMinedBlocksArriveAtTheFront()
+{
+    MinedBlocksModel model;
+    QSignalSpy inserted{&model, &QAbstractItemModel::rowsInserted};
+    QSignalSpy removed{&model, &QAbstractItemModel::rowsRemoved};
+    QSignalSpy reset{&model, &QAbstractItemModel::modelReset};
+    QSignalSpy count{&model, &MinedBlocksModel::countChanged};
+
+    model.setBlocks({Mined(100), Mined(99), Mined(98)});
+    QCOMPARE(inserted.size(), 1);
+    QCOMPARE(inserted[0][2].toInt(), 2);
+    QCOMPARE(count.size(), 1);
+
+    // A new tip: it arrives at the front and the oldest block leaves.
+    inserted.clear();
+    model.setBlocks({Mined(101), Mined(100), Mined(99)});
+    QCOMPARE(removed.size(), 1);
+    QCOMPARE(removed[0][1].toInt(), 2);
+    QCOMPARE(removed[0][2].toInt(), 2);
+    QCOMPARE(inserted.size(), 1);
+    QCOMPARE(inserted[0][1].toInt(), 0);
+    QCOMPARE(inserted[0][2].toInt(), 0);
+    QCOMPARE(MinedHeight(model, 0), 101);
+    QCOMPARE(MinedHeight(model, 2), 99);
+    QCOMPARE(count.size(), 1);
+
+    // Nothing new.
+    inserted.clear();
+    removed.clear();
+    model.setBlocks({Mined(101), Mined(100), Mined(99)});
+    QCOMPARE(inserted.size(), 0);
+    QCOMPARE(removed.size(), 0);
+    QCOMPARE(reset.size(), 0);
+
+    // A reorg replaces the blocks.
+    model.setBlocks({Mined(101, "fork"), Mined(100), Mined(99)});
+    QCOMPARE(reset.size(), 1);
+    QCOMPARE(inserted.size(), 0);
+    QCOMPARE(model.data(model.index(0), MinedBlocksModel::HeightRole).toInt(), 101);
+
+    model.setBlocks({});
+    QCOMPARE(model.rowCount(), 0);
+    QCOMPARE(count.size(), 2);
+}
+
+void MempoolBlocksModelTests::readsEachMinedBlockOnce()
+{
+    MockNode node;
+    std::atomic<int> tip{100};
+    std::atomic<int> stats_calls{0};
+    node.get_num_blocks_fn = [&] { return tip.load(); };
+    node.execute_rpc_fn = [&](const std::string& method, const UniValue& params, const std::string&) {
+        if (method == "getblockstats") ++stats_calls;
+        return ChainRpc(method, params, tip);
+    };
+
+    MempoolBlocksModel model{node, TEST_REFRESH_INTERVAL_MS};
+    const MinedBlocksModel& mined{*model.minedBlocks()};
+    model.setActive(true);
+    model.start();
+    QTRY_COMPARE_WITH_TIMEOUT(mined.rowCount(), int(mempool_blocks::MAX_MINED_BLOCKS), ASYNC_TIMEOUT_MS);
+    QCOMPARE(MinedHeight(mined, 0), 100);
+    QCOMPARE(MinedHeight(mined, 7), 93);
+    QCOMPARE(model.rowCount(), 1);
+    QCOMPARE(stats_calls.load(), 8);
+
+    tip = 101;
+    model.refresh();
+    QTRY_COMPARE_WITH_TIMEOUT(MinedHeight(mined, 0), 101, ASYNC_TIMEOUT_MS);
+    QCOMPARE(MinedHeight(mined, 7), 94);
+    QTest::qWait(TEST_REFRESH_INTERVAL_MS * 5);
+    QCOMPARE(stats_calls.load(), 9);
+}
+
+void MempoolBlocksModelTests::showsMinedBlocksUpToPrunedOnes()
+{
+    MockNode node;
+    node.get_num_blocks_fn = [] { return 100; };
+    node.execute_rpc_fn = [](const std::string& method, const UniValue& params, const std::string&) {
+        return ChainRpc(method, params, /*tip=*/100, /*pruned_below=*/97);
+    };
+
+    MempoolBlocksModel model{node, TEST_REFRESH_INTERVAL_MS};
+    model.setActive(true);
+    model.start();
+    QTRY_COMPARE_WITH_TIMEOUT(model.rowCount(), 1, ASYNC_TIMEOUT_MS);
+    QCOMPARE(model.minedBlocks()->rowCount(), 4);
+    QCOMPARE(MinedHeight(*model.minedBlocks(), 3), 97);
+}
+
 void MempoolBlocksModelTests::fetchesOffGuiThreadOnlyWhileActiveAfterStart()
 {
     MockNode node;
@@ -176,8 +347,8 @@ void MempoolBlocksModelTests::fetchesOffGuiThreadOnlyWhileActiveAfterStart()
     node.execute_rpc_fn = [&](const std::string& method, const UniValue& params, const std::string&) {
         ++calls;
         if (QThread::currentThread() == gui_thread) fetched_on_gui_thread = true;
-        if (method != "getrawmempool" || params.size() != 1 || !params[0].get_bool()) unexpected_request = true;
-        return OneTxMempool();
+        if (method == "getrawmempool" && (params.size() != 1 || !params[0].get_bool())) unexpected_request = true;
+        return ChainRpc(method, params, /*tip=*/100);
     };
 
     MempoolBlocksModel model{node, TEST_REFRESH_INTERVAL_MS};
@@ -210,7 +381,8 @@ void MempoolBlocksModelTests::rpcErrorsKeepPreviousBlocks()
     MockNode node;
     std::atomic<int> calls{0};
     node.get_num_blocks_fn = [] { return 100; };
-    node.execute_rpc_fn = [&](const std::string&, const UniValue&, const std::string&) -> UniValue {
+    node.execute_rpc_fn = [&](const std::string& method, const UniValue& params, const std::string&) -> UniValue {
+        if (method != "getrawmempool") return ChainRpc(method, params, /*tip=*/100);
         const int call{++calls};
         if (call == 1) return OneTxMempool();
         if (call % 2 == 0) throw std::runtime_error("unexpected result");
@@ -232,9 +404,9 @@ void MempoolBlocksModelTests::neverFetchesAfterShutdown()
     MockNode node;
     std::atomic<int> calls{0};
     node.get_num_blocks_fn = [] { return 100; };
-    node.execute_rpc_fn = [&](const std::string&, const UniValue&, const std::string&) {
+    node.execute_rpc_fn = [&](const std::string& method, const UniValue& params, const std::string&) {
         ++calls;
-        return OneTxMempool();
+        return ChainRpc(method, params, /*tip=*/100);
     };
 
     MempoolBlocksModel model{node, TEST_REFRESH_INTERVAL_MS};

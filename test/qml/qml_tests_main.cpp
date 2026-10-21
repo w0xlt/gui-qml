@@ -2982,6 +2982,7 @@ public:
             {Qt::UserRole + 6, "totalFees"},
             {Qt::UserRole + 7, "transactionCount"},
             {Qt::UserRole + 8, "vsize"},
+            {Qt::UserRole + 9, "time"},
         };
     }
 
@@ -3013,6 +3014,14 @@ public:
         beginRemoveRows({}, 0, rows - 1);
         m_blocks.erase(m_blocks.begin(), m_blocks.begin() + rows);
         endRemoveRows();
+        Q_EMIT countChanged();
+    }
+
+    Q_INVOKABLE void insertFront(const QVariantMap& block)
+    {
+        beginInsertRows({}, 0, 0);
+        m_blocks.prepend(block);
+        endInsertRows();
         Q_EMIT countChanged();
     }
 
@@ -4216,6 +4225,7 @@ public Q_SLOTS:
         static MockPeerTableModel peer_table_model;
         static MockNetworkTrafficTower network_traffic_tower;
         static MockMempoolBlocksModel mempool_blocks_model;
+        static MockMempoolBlocksModel mined_blocks_model;
         static MockNetworkStatusModel network_status_model;
         static MockPeerListModelProxy peer_list_model_proxy;
         static MockBanListModel ban_list_model;
@@ -4290,6 +4300,7 @@ public Q_SLOTS:
         engine->rootContext()->setContextProperty(QStringLiteral("peerTableModel"), &peer_table_model);
         engine->rootContext()->setContextProperty(QStringLiteral("networkTrafficTower"), &network_traffic_tower);
         engine->rootContext()->setContextProperty(QStringLiteral("mempoolBlocksModel"), &mempool_blocks_model);
+        engine->rootContext()->setContextProperty(QStringLiteral("minedBlocksModel"), &mined_blocks_model);
         engine->rootContext()->setContextProperty(QStringLiteral("testNetworkTrafficTower"), &network_traffic_tower);
         engine->rootContext()->setContextProperty(QStringLiteral("networkStatusModel"), &network_status_model);
         engine->rootContext()->setContextProperty(QStringLiteral("peerListModelProxy"), &peer_list_model_proxy);

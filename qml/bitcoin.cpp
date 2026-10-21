@@ -769,6 +769,7 @@ int QmlGuiMain(int argc, char* argv[])
 
     engine->rootContext()->setContextProperty("networkTrafficTower", &network_traffic_tower);
     engine->rootContext()->setContextProperty("mempoolBlocksModel", &mempool_blocks_model);
+    engine->rootContext()->setContextProperty("minedBlocksModel", mempool_blocks_model.minedBlocks());
     engine->rootContext()->setContextProperty("networkStatusModel", &network_status_model);
     engine->rootContext()->setContextProperty("nodeModel", &node_model);
     engine->rootContext()->setContextProperty("chainModel", &chain_model);

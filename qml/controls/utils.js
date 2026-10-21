@@ -16,10 +16,11 @@ function nodeConnectionIcon(numPeers) {
     return "image://images/node-4-connections"
 }
 
-function formatRelativeTime(isoString) {
+// Time since isoString, as of nowMs (milliseconds since the epoch) if given.
+function formatRelativeTime(isoString, nowMs) {
     if (!isoString) return ""
     var then = new Date(isoString)
-    var now = new Date()
+    var now = nowMs === undefined ? new Date() : new Date(nowMs)
     var diffSec = Math.floor((now - then) / 1000)
     if (diffSec < 60) return qsTr("just now")
     var m = Math.floor(diffSec / 60)

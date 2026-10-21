@@ -17,6 +17,14 @@ Control {
         "#BC4A34", "#BB4339", "#BB3D3C", "#BB373F", "#BA3243", "#B92B48", "#B9254B", "#B8214D",
         "#B71D4F", "#B61951", "#B41453", "#B30E55", "#B10857", "#B00259", "#AE005B",
     ]
+    // mempool.space mined block fills, top to bottom, by ChainModel network name.
+    readonly property var mempoolMinedBlockFills: ({
+        "MAIN": ["#9339F4", "#007CFA"],
+        "TEST": ["#1D486F", "#183550"],
+        "TESTNET4": ["#1D486F", "#183550"],
+        "SIGNET": ["#6F1D5D", "#471850"],
+        "REGTEST": ["#7D7D7D", "#4A4A4A"],
+    })
 
     AppSettings {
         id: settings
@@ -55,6 +63,10 @@ Control {
         required property color mempoolBlockSide
         required property color mempoolBlockEmpty
         required property color mempoolBlockFeeRange
+        required property color mempoolMinedBlockTop
+        required property color mempoolMinedBlockSide
+        required property color mempoolMinedBlockEmpty
+        required property var mempoolMinedBlockFills
         required property var mempoolFeeColors
     }
 
@@ -120,6 +132,10 @@ Control {
         mempoolBlockSide: "#2D2825"
         mempoolBlockEmpty: "#554B45"
         mempoolBlockFeeRange: "#FFF000"
+        mempoolMinedBlockTop: "#232838"
+        mempoolMinedBlockSide: "#191C27"
+        mempoolMinedBlockEmpty: "#272F4E"
+        mempoolMinedBlockFills: root.mempoolMinedBlockFills
         mempoolFeeColors: root.mempoolFeeColors
     }
 
@@ -162,6 +178,10 @@ Control {
         mempoolBlockSide: "#C8CDD3"
         mempoolBlockEmpty: "#8E969F"
         mempoolBlockFeeRange: "#FFF000"
+        mempoolMinedBlockTop: "#C9D1E2"
+        mempoolMinedBlockSide: "#B6C1D8"
+        mempoolMinedBlockEmpty: "#7E8CA9"
+        mempoolMinedBlockFills: root.mempoolMinedBlockFills
         mempoolFeeColors: root.mempoolFeeColors
     }
 

@@ -18,6 +18,44 @@ class Node;
 class MempoolBlocksWorker;
 class QThread;
 
+//! The most recent blocks in the active chain, newest first.
+class MinedBlocksModel : public QAbstractListModel
+{
+    Q_OBJECT
+    Q_PROPERTY(int count READ count NOTIFY countChanged)
+
+public:
+    enum Roles {
+        HeightRole = Qt::UserRole + 1,
+        TimeRole,
+        MedianFeeRateRole,
+        MinFeeRateRole,
+        MaxFeeRateRole,
+        FeeRangeRole,
+        TotalFeesRole,
+        TransactionCountRole,
+        VSizeRole,
+    };
+
+    using QAbstractListModel::QAbstractListModel;
+
+    int rowCount(const QModelIndex& parent = QModelIndex()) const override;
+    QVariant data(const QModelIndex& index, int role = Qt::DisplayRole) const override;
+    QHash<int, QByteArray> roleNames() const override;
+
+    int count() const { return static_cast<int>(m_blocks.size()); }
+
+    //! Replace the blocks. Blocks connected on top of the previous tip are
+    //! inserted at the front, so views can animate them arriving.
+    void setBlocks(std::vector<mempool_blocks::MinedBlock> blocks);
+
+Q_SIGNALS:
+    void countChanged();
+
+private:
+    std::vector<mempool_blocks::MinedBlock> m_blocks;
+};
+
 //! Projected next blocks built from the node's mempool, nearest block first.
 class MempoolBlocksModel : public QAbstractListModel
 {
@@ -50,13 +88,16 @@ public:
     bool active() const { return m_active; }
     bool loaded() const { return m_loaded; }
     int count() const { return static_cast<int>(m_blocks.size()); }
+    //! Recent blocks, refreshed together with the projected ones.
+    MinedBlocksModel* minedBlocks() { return &m_mined_blocks; }
 
     void beginShutdown();
 
     //! Apply a snapshot taken at the given tip. Blocks mined since the last
     //! snapshot are removed from the front first, so views can animate them
     //! leaving toward the chain.
-    void applySnapshot(int tip_height, std::vector<mempool_blocks::ProjectedBlock> blocks);
+    void applySnapshot(int tip_height, std::vector<mempool_blocks::ProjectedBlock> blocks,
+                       std::vector<mempool_blocks::MinedBlock> mined_blocks = {});
 
 public Q_SLOTS:
     void setActive(bool active);
@@ -81,6 +122,7 @@ private:
     quint64 m_activation_generation{0};
     int m_tip_height{-1};
     std::vector<mempool_blocks::ProjectedBlock> m_blocks;
+    MinedBlocksModel m_mined_blocks;
 };
 
 #endif // BITCOIN_QML_MODELS_MEMPOOLBLOCKSMODEL_H

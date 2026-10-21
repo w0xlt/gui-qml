@@ -225,6 +225,32 @@ std::vector<MempoolTx> ParseRawMempool(const UniValue& verbose_mempool)
     return txs;
 }
 
+std::vector<std::string> BlockStatsFields()
+{
+    return {"height", "time", "txs", "totalfee", "total_weight", "feerate_percentiles", "minfeerate", "maxfeerate"};
+}
+
+MinedBlock ParseBlockStats(const UniValue& stats, std::string hash)
+{
+    MinedBlock block;
+    block.hash = std::move(hash);
+    block.height = stats["height"].getInt<int>();
+    block.time = stats["time"].getInt<int64_t>();
+    block.tx_count = stats["txs"].getInt<int>();
+    block.total_fees = stats["totalfee"].getInt<CAmount>();
+    block.weight = stats["total_weight"].getInt<int64_t>();
+
+    const std::vector<UniValue>& percentiles{stats["feerate_percentiles"].get_array().getValues()};
+    if (percentiles.size() != 5) throw std::runtime_error("invalid fee rate percentiles in block stats");
+    block.fee_range.push_back(stats["minfeerate"].get_real());
+    for (const UniValue& percentile : percentiles) {
+        block.fee_range.push_back(percentile.get_real());
+    }
+    block.fee_range.push_back(stats["maxfeerate"].get_real());
+    block.median_fee_rate = block.fee_range[3];
+    return block;
+}
+
 std::vector<ProjectedBlock> ProjectBlocks(const std::vector<MempoolTx>& txs, size_t max_blocks)
 {
     std::vector<ProjectedBlock> blocks;

@@ -64,7 +64,9 @@ Page {
             Layout.preferredHeight: implicitHeight
             visible: nodeModel.mempoolInformationAvailable
             model: mempoolBlocksModel
+            minedModel: minedBlocksModel
             loaded: mempoolBlocksModel.loaded
+            network: chainModel.networkName
         }
 
         CoreText {
@@ -74,7 +76,7 @@ Page {
             Layout.rightMargin: 30
             color: Theme.color.neutral7
             text: nodeModel.mempoolInformationAvailable
-                ? qsTr("Transactions waiting in your node's mempool, grouped into the blocks they would most likely be mined in next.")
+                ? qsTr("Left of the line, transactions waiting in your node's mempool, grouped into the blocks they would most likely be mined in next. Right of the line, the latest blocks in your node's chain.")
                 : qsTr("Mempool information is not available while the node only relays blocks.")
         }
 

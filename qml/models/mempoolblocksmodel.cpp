@@ -14,6 +14,7 @@
 #include <exception>
 #include <functional>
 #include <iterator>
+#include <string>
 #include <utility>
 
 #include <QElapsedTimer>
@@ -30,7 +31,18 @@ struct MempoolBlocksSnapshot {
     quint64 generation{0};
     int tip_height{0};
     std::vector<mempool_blocks::ProjectedBlock> blocks;
+    std::vector<mempool_blocks::MinedBlock> mined_blocks;
 };
+
+QVariantList FeeRangeList(const std::vector<double>& fee_range)
+{
+    QVariantList list;
+    list.reserve(static_cast<qsizetype>(fee_range.size()));
+    for (const double fee_rate : fee_range) {
+        list.append(fee_rate);
+    }
+    return list;
+}
 } // namespace
 
 class MempoolBlocksWorker : public QObject
@@ -94,23 +106,83 @@ private:
     {
         if (!m_started || !m_active) return;
         m_last_fetch.start();
+        qint64 mempool_cost_ms{0};
         try {
             MempoolBlocksSnapshot snapshot;
             snapshot.generation = m_generation;
             snapshot.tip_height = m_node.getNumBlocks();
+            updateMinedBlocks(snapshot.tip_height);
+            snapshot.mined_blocks = m_mined_blocks;
+
+            QElapsedTimer mempool_timer;
+            mempool_timer.start();
             UniValue params{UniValue::VARR};
             params.push_back(/*verbose=*/true);
             const UniValue mempool{m_node.executeRpc("getrawmempool", params, /*uri=*/"")};
             snapshot.blocks = mempool_blocks::ProjectBlocks(mempool_blocks::ParseRawMempool(mempool));
+            mempool_cost_ms = mempool_timer.elapsed();
             m_publish(std::move(snapshot));
         } catch (const UniValue&) {
             // RPC errors, e.g. while the node shuts down. The next refresh retries.
         } catch (const std::exception&) {
         }
-        const qint64 cost_ms{m_last_fetch.elapsed()};
-        m_timer->start(static_cast<int>(std::clamp<qint64>(cost_ms * REFRESH_COST_FACTOR,
+        m_timer->start(static_cast<int>(std::clamp<qint64>(mempool_cost_ms * REFRESH_COST_FACTOR,
                                                            m_min_refresh_interval_ms,
                                                            std::max(m_min_refresh_interval_ms, MAX_REFRESH_INTERVAL_MS))));
+    }
+
+    std::string blockHash(int height)
+    {
+        UniValue params{UniValue::VARR};
+        params.push_back(height);
+        return m_node.executeRpc("getblockhash", params, /*uri=*/"").get_str();
+    }
+
+    //! Refresh the recent blocks when the tip changed, reusing the stats of
+    //! blocks seen before. Reading stats loads each block and its undo data
+    //! from disk, so after a slow refresh the next one waits, e.g. while
+    //! blocks connect quickly during sync.
+    void updateMinedBlocks(int tip_height)
+    {
+        if (tip_height < 0) return;
+        if (m_last_mined_fetch.isValid() && m_last_mined_fetch.elapsed() < m_mined_retry_ms) return;
+        std::string hash;
+        try {
+            hash = blockHash(tip_height);
+        } catch (const UniValue&) {
+            return;
+        } catch (const std::exception&) {
+            return;
+        }
+        if (!m_mined_blocks.empty() && m_mined_blocks.front().hash == hash) return;
+
+        m_last_mined_fetch.start();
+        std::vector<mempool_blocks::MinedBlock> mined_blocks;
+        try {
+            for (int height = tip_height; height >= 0 && mined_blocks.size() < mempool_blocks::MAX_MINED_BLOCKS; --height) {
+                if (height < tip_height) hash = blockHash(height);
+                const auto seen{std::find_if(m_mined_blocks.begin(), m_mined_blocks.end(), [&](const auto& block) {
+                    return block.hash == hash;
+                })};
+                if (seen != m_mined_blocks.end()) {
+                    mined_blocks.push_back(*seen);
+                    continue;
+                }
+                UniValue fields{UniValue::VARR};
+                for (const std::string& field : mempool_blocks::BlockStatsFields()) {
+                    fields.push_back(field);
+                }
+                UniValue params{UniValue::VARR};
+                params.push_back(hash);
+                params.push_back(std::move(fields));
+                mined_blocks.push_back(mempool_blocks::ParseBlockStats(m_node.executeRpc("getblockstats", params, /*uri=*/""), hash));
+            }
+        } catch (const UniValue&) {
+            // Older blocks may be pruned. Show the ones read so far.
+        } catch (const std::exception&) {
+        }
+        m_mined_blocks = std::move(mined_blocks);
+        m_mined_retry_ms = std::min<qint64>(m_last_mined_fetch.elapsed() * REFRESH_COST_FACTOR, MAX_REFRESH_INTERVAL_MS);
     }
 
     interfaces::Node& m_node;
@@ -118,10 +190,106 @@ private:
     PublishFn m_publish;
     QTimer* m_timer;
     QElapsedTimer m_last_fetch;
+    QElapsedTimer m_last_mined_fetch;
+    qint64 m_mined_retry_ms{0};
+    std::vector<mempool_blocks::MinedBlock> m_mined_blocks;
     bool m_started{false};
     bool m_active{false};
     quint64 m_generation{0};
 };
+
+int MinedBlocksModel::rowCount(const QModelIndex& parent) const
+{
+    if (parent.isValid()) return 0;
+    return count();
+}
+
+QVariant MinedBlocksModel::data(const QModelIndex& index, int role) const
+{
+    if (!index.isValid() || index.row() < 0 || index.row() >= count()) return {};
+
+    const mempool_blocks::MinedBlock& block{m_blocks[index.row()]};
+    switch (role) {
+    case HeightRole:
+        return block.height;
+    case TimeRole:
+        return QVariant::fromValue<qint64>(block.time);
+    case MedianFeeRateRole:
+        return block.median_fee_rate;
+    case MinFeeRateRole:
+        // Like mempool.space for blocks it only has `getblockstats` for, the
+        // range starts at the 10th percentile.
+        return block.fee_range.size() > 1 ? block.fee_range[1] : 0.0;
+    case MaxFeeRateRole:
+        return block.fee_range.empty() ? 0.0 : block.fee_range.back();
+    case FeeRangeRole:
+        return FeeRangeList(block.fee_range);
+    case TotalFeesRole:
+        return QVariant::fromValue<qint64>(block.total_fees);
+    case TransactionCountRole:
+        return block.tx_count;
+    case VSizeRole:
+        return QVariant::fromValue<qint64>(block.weight / WITNESS_SCALE_FACTOR);
+    }
+    return {};
+}
+
+QHash<int, QByteArray> MinedBlocksModel::roleNames() const
+{
+    return {
+        {HeightRole, "height"},
+        {TimeRole, "time"},
+        {MedianFeeRateRole, "medianFeeRate"},
+        {MinFeeRateRole, "minFeeRate"},
+        {MaxFeeRateRole, "maxFeeRate"},
+        {FeeRangeRole, "feeRange"},
+        {TotalFeesRole, "totalFees"},
+        {TransactionCountRole, "transactionCount"},
+        {VSizeRole, "vsize"},
+    };
+}
+
+void MinedBlocksModel::setBlocks(std::vector<mempool_blocks::MinedBlock> blocks)
+{
+    const auto same_hash{[](const auto& a, const auto& b) { return a.hash == b.hash; }};
+    const int previous_count{count()};
+
+    // New blocks on top of the previous tip, followed by the previous blocks.
+    size_t added{0};
+    if (!m_blocks.empty()) {
+        while (added < blocks.size() && blocks[added].hash != m_blocks.front().hash) ++added;
+    }
+    const size_t kept{blocks.size() - added};
+    const bool extends_tip{!m_blocks.empty() && added < blocks.size() && kept <= m_blocks.size() &&
+                           std::equal(blocks.begin() + added, blocks.end(), m_blocks.begin(), same_hash)};
+
+    if (extends_tip) {
+        if (kept < m_blocks.size()) {
+            beginRemoveRows({}, static_cast<int>(kept), count() - 1);
+            m_blocks.resize(kept);
+            endRemoveRows();
+        }
+        if (added > 0) {
+            beginInsertRows({}, 0, static_cast<int>(added) - 1);
+            m_blocks.insert(m_blocks.begin(), std::make_move_iterator(blocks.begin()),
+                            std::make_move_iterator(blocks.begin() + added));
+            endInsertRows();
+        }
+    } else if (m_blocks.empty()) {
+        if (!blocks.empty()) {
+            beginInsertRows({}, 0, static_cast<int>(blocks.size()) - 1);
+            m_blocks = std::move(blocks);
+            endInsertRows();
+        }
+    } else {
+        // A reorg, or a jump past every block shown.
+        beginResetModel();
+        m_blocks = std::move(blocks);
+        endResetModel();
+    }
+
+    if (count() != previous_count) Q_EMIT countChanged();
+}
 
 MempoolBlocksModel::MempoolBlocksModel(interfaces::Node& node, int min_refresh_interval_ms, QObject* parent)
     : QAbstractListModel{parent}
@@ -131,7 +299,7 @@ MempoolBlocksModel::MempoolBlocksModel(interfaces::Node& node, int min_refresh_i
     m_worker = new MempoolBlocksWorker(node, min_refresh_interval_ms, [this](MempoolBlocksSnapshot snapshot) {
         QMetaObject::invokeMethod(this, [this, snapshot = std::move(snapshot)]() mutable {
             if (m_stopping || !m_active || snapshot.generation != m_activation_generation) return;
-            applySnapshot(snapshot.tip_height, std::move(snapshot.blocks));
+            applySnapshot(snapshot.tip_height, std::move(snapshot.blocks), std::move(snapshot.mined_blocks));
         }, Qt::QueuedConnection);
     });
     m_worker->moveToThread(m_worker_thread);
@@ -167,14 +335,8 @@ QVariant MempoolBlocksModel::data(const QModelIndex& index, int role) const
         return block.fee_range.empty() ? 0.0 : block.fee_range.front();
     case MaxFeeRateRole:
         return block.fee_range.empty() ? 0.0 : block.fee_range.back();
-    case FeeRangeRole: {
-        QVariantList fee_range;
-        fee_range.reserve(static_cast<qsizetype>(block.fee_range.size()));
-        for (const double fee_rate : block.fee_range) {
-            fee_range.append(fee_rate);
-        }
-        return fee_range;
-    }
+    case FeeRangeRole:
+        return FeeRangeList(block.fee_range);
     case TotalFeesRole:
         return QVariant::fromValue<qint64>(block.total_fees);
     case TransactionCountRole:
@@ -199,8 +361,10 @@ QHash<int, QByteArray> MempoolBlocksModel::roleNames() const
     };
 }
 
-void MempoolBlocksModel::applySnapshot(int tip_height, std::vector<mempool_blocks::ProjectedBlock> blocks)
+void MempoolBlocksModel::applySnapshot(int tip_height, std::vector<mempool_blocks::ProjectedBlock> blocks,
+                                       std::vector<mempool_blocks::MinedBlock> mined_blocks)
 {
+    m_mined_blocks.setBlocks(std::move(mined_blocks));
     const int previous_count{count()};
 
     if (m_tip_height >= 0 && tip_height > m_tip_height && !m_blocks.empty()) {

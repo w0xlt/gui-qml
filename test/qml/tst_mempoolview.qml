@@ -36,6 +36,20 @@ TestCase {
         }
     }
 
+    function minedBlock(height, minutesAgo, vsize) {
+        return {
+            height: height,
+            time: Math.floor(Date.now() / 1000) - minutesAgo * 60,
+            medianFeeRate: 5,
+            minFeeRate: 2,
+            maxFeeRate: 300,
+            feeRange: [1, 2, 3, 5, 8, 13, 300],
+            totalFees: 2500000,
+            transactionCount: 3200,
+            vsize: vsize,
+        }
+    }
+
     function init() {
         nodeModel.mempoolInformationAvailable = true
         nodeModel.initialSyncComplete = true
@@ -45,10 +59,16 @@ TestCase {
             projectedBlock(4, 3.5, 9.99, 2000000, 2500, 1000000),
             projectedBlock(1.2, 0.1, 3.4, 4000, 3000, 2500000),
         ])
+        minedBlocksModel.setBlocks([
+            minedBlock(100, 5, 750000),
+            minedBlock(99, 17, 998000),
+            minedBlock(98, 130, 400000),
+        ])
     }
 
     function cleanup() {
         mempoolBlocksModel.setBlocks([])
+        minedBlocksModel.setBlocks([])
         mempoolBlocksModel.loaded = false
         mempoolBlocksModel.active = false
         nodeModel.mempoolInformationAvailable = true
@@ -66,6 +86,17 @@ TestCase {
 
     function blockAt(view, index) {
         const list = findChild(view, "mempoolBlocksView")
+        let item = null
+        tryVerify(function() {
+            item = list.itemAtIndex(index)
+            return item !== null
+        })
+        return item
+    }
+
+    function minedAt(view, index) {
+        const list = findChild(view, "minedBlocksView")
+        verify(list !== null)
         let item = null
         tryVerify(function() {
             item = list.itemAtIndex(index)
@@ -136,12 +167,114 @@ TestCase {
         }
     }
 
-    function test_projected_blocks_pulse() {
+    function test_mined_blocks_sit_right_of_the_divider_newest_first() {
+        const view = createView()
+        const divider = findChild(view, "mempoolBlocksDivider")
+        const newest = minedAt(view, 0)
+        const older = minedAt(view, 1)
+        tryVerify(function() { return older.x > newest.x })
+        const gap = newest.mapToItem(view, 0, 0).x - centerOf(divider, view)
+        verify(gap > 0 && gap < 20, "the newest mined block starts " + gap + " px after the divider")
+
+        // Both strips stand on the same line.
+        const next = blockAt(view, 0)
+        const minedCube = findChild(newest, "mempoolBlockFace")
+        const nextCube = findChild(next, "mempoolBlockFace")
+        compare(minedCube.mapToItem(view, 0, minedCube.height).y, nextCube.mapToItem(view, 0, nextCube.height).y)
+
+        compare(blockText(newest, "minedBlockHeight"), "100")
+        compare(blockText(older, "minedBlockHeight"), "99")
+        compare(blockText(newest, "mempoolBlockMedianFee"), "~5 sat/vB")
+        compare(blockText(newest, "mempoolBlockFeeRange"),
+                Utils.formatFeeRate(2) + " - " + Utils.formatFeeRate(300) + " sat/vB")
+        compare(blockText(newest, "mempoolBlockTotalFees"), Utils.formatBlockFees(2500000))
+        compare(blockText(newest, "mempoolBlockTransactions"),
+                Number(3200).toLocaleString(Qt.locale(), 'f', 0) + " transactions")
+        compare(blockText(newest, "mempoolBlockTime"), "5 minutes ago")
+        compare(blockText(minedAt(view, 2), "mempoolBlockTime"), "2 hours ago")
+        verify(!findChild(newest, "mempoolBlockEta").visible)
+        verify(!findChild(next, "mempoolBlockTime").visible)
+    }
+
+    function test_mined_block_fills_from_the_bottom_by_size() {
+        const view = createView()
+        const newest = minedAt(view, 0)
+        const face = findChild(newest, "mempoolBlockFace")
+        const fill = findChild(newest, "mempoolBlockMinedFill")
+        verify(fill.visible)
+        verify(!findChild(newest, "mempoolBlockFill").visible)
+        compare(findChild(newest, "minedBlock").segmentColors.length, 0)
+        compare(fill.height, face.height * 0.75)
+        compare(fill.y + fill.height, face.height)
+
+        verify(!findChild(blockAt(view, 0), "mempoolBlockMinedFill").visible)
+    }
+
+    function test_mined_blocks_are_colored_apart_from_projected_ones() {
+        const view = createView()
+        const mined = findChild(minedAt(view, 0), "mempoolBlockFace")
+        const projected = findChild(blockAt(view, 0), "mempoolBlockFace")
+        compare(mined.color, Theme.color.mempoolMinedBlockEmpty)
+        compare(projected.color, Theme.color.mempoolBlockEmpty)
+        verify(!Qt.colorEqual(mined.color, projected.color))
+    }
+
+    function test_mined_block_fill_follows_the_network() {
+        const view = createView()
+        const strip = findChild(view, "mempoolBlocksStrip")
+        const fill = findChild(minedAt(view, 0), "mempoolBlockMinedFill")
+        compare(strip.network, "REGTEST")
+        const networks = {
+            "REGTEST": ["#7d7d7d", "#4a4a4a"],
+            "SIGNET": ["#6f1d5d", "#471850"],
+            "TESTNET4": ["#1d486f", "#183550"],
+            "MAIN": ["#9339f4", "#007cfa"],
+            "UNKNOWN": ["#9339f4", "#007cfa"],
+        }
+        for (const network in networks) {
+            strip.network = network
+            verify(Qt.colorEqual(fill.gradient.stops[0].color, networks[network][0]), network)
+            verify(Qt.colorEqual(fill.gradient.stops[1].color, networks[network][1]), network)
+        }
+    }
+
+    function test_mined_median_is_a_whole_number() {
+        const block = minedBlock(100, 5, 1000)
+        block.medianFeeRate = 0.4
+        block.minFeeRate = 0
+        block.maxFeeRate = 0.5
+        minedBlocksModel.setBlocks([block])
+        const view = createView()
+        const newest = minedAt(view, 0)
+        compare(blockText(newest, "mempoolBlockMedianFee"), "~0 sat/vB")
+        compare(blockText(newest, "mempoolBlockFeeRange"),
+                Utils.formatFeeRate(0) + " - " + Utils.formatFeeRate(0.5) + " sat/vB")
+    }
+
+    function test_new_mined_block_arrives_at_the_divider() {
+        const view = createView()
+        const list = findChild(view, "minedBlocksView")
+        const previous = minedAt(view, 0)
+        mempoolBlocksModel.removeFront(1)
+        minedBlocksModel.insertFront(minedBlock(101, 0, 900000))
+        tryCompare(list, "count", 4)
+        tryVerify(function() {
+            const newest = list.itemAtIndex(0)
+            return newest !== null && newest !== previous && newest.x === 0 && newest.opacity === 1
+        }, 3000)
+        compare(blockText(list.itemAtIndex(0), "minedBlockHeight"), "101")
+        compare(blockText(list.itemAtIndex(0), "mempoolBlockTime"), "just now")
+        tryVerify(function() { return previous.x > list.itemAtIndex(0).x + previous.width }, 3000)
+    }
+
+    function test_projected_blocks_pulse_and_mined_ones_do_not() {
         const view = createView()
         const projected = findChild(view, "mempoolBlocksView")
+        const mined = findChild(view, "minedBlocksView")
         tryVerify(function() { return projected.opacity < 0.75 }, 3000)
         tryVerify(function() { return projected.opacity > 0.95 }, 3000)
         verify(projected.opacity >= 0.7 && projected.opacity <= 1)
+        compare(mined.opacity, 1)
 
         view.visible = false
         const paused = projected.opacity

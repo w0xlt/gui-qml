@@ -10,11 +10,13 @@
 #include <qml/models/mempoolblocks.h>
 #include <univalue.h>
 
+#include <algorithm>
 #include <stdexcept>
 #include <string>
 #include <vector>
 
 using mempool_blocks::MempoolTx;
+using mempool_blocks::MinedBlock;
 using mempool_blocks::ProjectBlocks;
 using mempool_blocks::ProjectedBlock;
 
@@ -92,6 +94,8 @@ private Q_SLOTS:
     void childPaysForParentRaisesChunk();
     void skipsRestOfClusterWhenChunkDoesNotFit();
     void medianIsWeightedAndCountsUnusedSpace();
+    void parsesBlockStats();
+    void rejectsMalformedBlockStats();
 };
 
 void MempoolBlocksTests::parsesVerboseMempool()
@@ -222,6 +226,55 @@ void MempoolBlocksTests::medianIsWeightedAndCountsUnusedSpace()
     QCOMPARE(sparse.size(), size_t{1});
     QCOMPARE(sparse[0].median_fee_rate, 0.0);
     QCOMPARE(sparse[0].fee_range, (std::vector<double>(7, 3.0)));
+}
+
+UniValue BlockStats(std::vector<int> percentiles)
+{
+    UniValue fee_rates{UniValue::VARR};
+    for (const int fee_rate : percentiles) fee_rates.push_back(fee_rate);
+    UniValue stats{UniValue::VOBJ};
+    stats.pushKV("height", 840'000);
+    stats.pushKV("time", 1'713'571'767);
+    stats.pushKV("txs", 3'050);
+    stats.pushKV("totalfee", 3'762'206);
+    stats.pushKV("total_weight", 3'993'000);
+    stats.pushKV("feerate_percentiles", std::move(fee_rates));
+    stats.pushKV("minfeerate", 1);
+    stats.pushKV("maxfeerate", 2'000);
+    return stats;
+}
+
+void MempoolBlocksTests::parsesBlockStats()
+{
+    const MinedBlock block{mempool_blocks::ParseBlockStats(BlockStats({4, 9, 12, 20, 40}), "abc")};
+    QCOMPARE(block.hash, std::string{"abc"});
+    QCOMPARE(block.height, 840'000);
+    QCOMPARE(block.time, int64_t{1'713'571'767});
+    QCOMPARE(block.tx_count, 3'050);
+    QCOMPARE(block.total_fees, CAmount{3'762'206});
+    QCOMPARE(block.weight, int64_t{3'993'000});
+    QCOMPARE(block.median_fee_rate, 12.0);
+    QCOMPARE(block.fee_range, (std::vector<double>{1, 4, 9, 12, 20, 40, 2'000}));
+
+    // Every field read is requested.
+    const std::vector<std::string> fields{mempool_blocks::BlockStatsFields()};
+    const UniValue stats{BlockStats({1, 2, 3, 4, 5})};
+    for (const std::string& key : stats.getKeys()) {
+        QVERIFY2(std::find(fields.begin(), fields.end(), key) != fields.end(), key.c_str());
+    }
+}
+
+void MempoolBlocksTests::rejectsMalformedBlockStats()
+{
+    for (UniValue stats : {BlockStats({1, 2, 3, 4}), UniValue{UniValue::VOBJ}}) {
+        bool threw{false};
+        try {
+            mempool_blocks::ParseBlockStats(stats, "abc");
+        } catch (const std::exception&) {
+            threw = true;
+        }
+        QVERIFY(threw);
+    }
 }
 
 #ifdef BITCOINQML_NO_TEST_MAIN
