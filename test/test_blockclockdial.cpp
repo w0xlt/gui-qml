@@ -139,6 +139,8 @@ private Q_SLOTS:
     void coalescedBlocksSaturateAtHighestConfirmationColor();
     void blocksCoalescedWithCurrentTimePreserveConfirmationDepth();
     void blocksCoalescedWithPeriodStartDoNotShiftVisibleDepth();
+    void layersSplitSettledAndNewestSegments();
+    void newestBlockGlowsIntoTheRingMargin();
 };
 
 void BlockClockDialTests::ibdProgressRendersImmediateHalfArc()
@@ -471,6 +473,63 @@ void BlockClockDialTests::blocksCoalescedWithPeriodStartDoNotShiftVisibleDepth()
     const QImage image{RenderDial(dial)};
     VerifyDialColor(image, 0.125, CONFIRMATION_COLORS[1]);
     VerifyDialColor(image, 0.50, CONFIRMATION_COLORS[0]);
+}
+
+void BlockClockDialTests::layersSplitSettledAndNewestSegments()
+{
+    const QList<qreal> blocks{0.15, 0.30, 0.45, 0.60, 0.75};
+
+    BlockClockDial settled;
+    ConfigureSyncedDial(settled, 0.90, blocks);
+    settled.setBlockLayer(BlockClockDial::SettledBlocks);
+    const QImage settled_image{RenderDial(settled)};
+    VerifyDialColor(settled_image, 0.675, CONFIRMATION_COLORS[1]);
+    // The track shows where the newest segment is left out.
+    VerifyDialColor(settled_image, 0.825, BACKGROUND_COLOR);
+
+    BlockClockDial newest;
+    ConfigureSyncedDial(newest, 0.90, blocks);
+    newest.setBlockLayer(BlockClockDial::NewestBlock);
+    const QImage newest_image{RenderDial(newest)};
+    VerifyDialColor(newest_image, 0.825, CONFIRMATION_COLORS[0]);
+    // Without the track or the older segments.
+    QCOMPARE(newest_image.pixelColor(DialPoint(0.675)).alpha(), 0);
+    QCOMPARE(newest_image.pixelColor(DialPoint(0.40)).alpha(), 0);
+}
+
+void BlockClockDialTests::newestBlockGlowsIntoTheRingMargin()
+{
+    constexpr int margin{30};
+    BlockClockDial dial;
+    ConfigureSyncedDial(dial, 0.90, {0.75});
+    dial.setBlockLayer(BlockClockDial::NewestBlock);
+    dial.setHeadColor(Qt::white);
+    dial.setRingMargin(margin);
+    dial.setWidth(DIAL_SIZE + 2 * margin);
+    dial.setHeight(DIAL_SIZE + 2 * margin);
+
+    QImage image{DIAL_SIZE + 2 * margin, DIAL_SIZE + 2 * margin, QImage::Format_ARGB32_Premultiplied};
+    image.fill(Qt::transparent);
+    {
+        QPainter painter{&image};
+        dial.paint(&painter);
+    }
+
+    // The ring is inset by the margin.
+    const QPoint offset{margin, margin};
+    QVERIFY(ColorDistance(image.pixelColor(DialPoint(0.825) + offset), CONFIRMATION_COLORS[0]) < 10);
+
+    // The head marks the end of the segment, half a gap before the current
+    // time, and its glow reaches past the ring.
+    constexpr qreal pen_width{12};
+    constexpr qreal ring_radius{DIAL_SIZE / 2.0 - pen_width / 2.0 - 1.0};
+    const qreal head{0.90 - qRadiansToDegrees((pen_width * 1.5) / ring_radius) / 2.0 / 360.0};
+    QVERIFY(ColorDistance(image.pixelColor(DialPoint(head) + offset), Qt::white) < 10);
+    const qreal angle{head * 2.0 * M_PI};
+    const qreal outside_radius{DIAL_SIZE / 2.0 + 6.0};
+    const QPoint outside{qRound(DIAL_SIZE / 2.0 + qSin(angle) * outside_radius),
+                         qRound(DIAL_SIZE / 2.0 - qCos(angle) * outside_radius)};
+    QVERIFY(image.pixelColor(outside + offset).alpha() > 0);
 }
 
 #ifdef BITCOINQML_NO_TEST_MAIN

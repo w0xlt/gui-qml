@@ -12,7 +12,10 @@ Control {
     property string text: ""
     property color accentColor: Theme.color.orange
     property color backgroundColor: Qt.rgba(accentColor.r, accentColor.g, accentColor.b, 0.16)
+    property color textColor: accentColor
     property bool showDot: true
+    property real dotOpacity: 1
+    readonly property real textImplicitWidth: label.implicitWidth
 
     leftPadding: 12
     rightPadding: 12
@@ -34,10 +37,12 @@ Control {
             height: root.showDot ? 6 : 0
             radius: 3
             color: root.accentColor
+            opacity: root.dotOpacity
         }
         CoreText {
+            id: label
             text: root.text
-            color: root.accentColor
+            color: root.textColor
             font: Theme.text.captionStrong.font
         }
     }

@@ -21,6 +21,10 @@
  * separate rounded segments are coalesced without losing their block count;
  * the resulting segment records both confirmation depths and paints the skipped
  * transitions as a continuous gradient.
+ *
+ * The newest segment, which ends at the current time, is the block being
+ * built. It can be painted by a second dial on top, so it can be animated
+ * without repainting the others.
  */
 class BlockClockDial : public QQuickPaintedItem
 {
@@ -45,8 +49,23 @@ class BlockClockDial : public QQuickPaintedItem
     Q_PROPERTY(QColor backgroundColor READ backgroundColor WRITE setBackgroundColor)
     Q_PROPERTY(QList<QColor> confirmationColors READ confirmationColors WRITE setConfirmationColors )
     Q_PROPERTY(QColor timeTickColor READ timeTickColor WRITE setTimeTickColor)
+    /** Which block segments a synced dial paints. */
+    Q_PROPERTY(BlockLayer blockLayer READ blockLayer WRITE setBlockLayer)
+    /** Space around the ring, e.g. for the newest segment's glow. */
+    Q_PROPERTY(qreal ringMargin READ ringMargin WRITE setRingMargin)
+    /** Marks the current time at the end of the newest segment, if valid. */
+    Q_PROPERTY(QColor headColor READ headColor WRITE setHeadColor)
 
 public:
+    enum BlockLayer {
+        AllBlocks,
+        /** Every segment except the newest. */
+        SettledBlocks,
+        /** Only the newest segment, with a glow and the head color at its end. */
+        NewestBlock,
+    };
+    Q_ENUM(BlockLayer)
+
     explicit BlockClockDial(QQuickItem * parent = nullptr);
     ~BlockClockDial() override;
     void paint(QPainter * painter) override;
@@ -68,6 +87,9 @@ public:
     QColor backgroundColor() const { return m_background_color; };
     QList<QColor> confirmationColors() const { return m_confirmation_colors; };
     QColor timeTickColor() const { return m_time_tick_color; };
+    BlockLayer blockLayer() const { return m_block_layer; }
+    qreal ringMargin() const { return m_ring_margin; }
+    QColor headColor() const { return m_head_color; }
 
 public Q_SLOTS:
     void setCurrentTimeFraction(qreal fraction);
@@ -87,6 +109,9 @@ public Q_SLOTS:
     void setBackgroundColor(QColor color);
     void setConfirmationColors(QList<QColor> colorList);
     void setTimeTickColor(QColor color);
+    void setBlockLayer(BlockLayer layer);
+    void setRingMargin(qreal margin);
+    void setHeadColor(QColor color);
 
 Q_SIGNALS:
     void scaleChanged();
@@ -110,6 +135,7 @@ private:
     void paintCurrentTimeArc(QPainter* painter);
     void paintSyncedGradientArc(QPainter* painter);
     void paintBlocks(QPainter * painter);
+    void paintNewestBlockHead(QPainter* painter, const QRectF& bounds, qreal angle, const QColor& color);
     void paintBackground(QPainter * painter);
     void paintTimeTicks(QPainter * painter);
     QRectF getBoundsForPen(const QPen & pen);
@@ -153,6 +179,9 @@ private:
     const qreal m_connecting_end_angle = -180;
     QList<QColor> m_confirmation_colors{};
     QColor m_time_tick_color{"#000000"};
+    BlockLayer m_block_layer{AllBlocks};
+    qreal m_ring_margin{0};
+    QColor m_head_color;
     QTimer m_animation_timer;
     QTimer m_delay_timer;
     QMetaObject::Connection m_window_visibility_connection;

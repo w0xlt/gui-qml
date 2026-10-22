@@ -5,6 +5,7 @@
 import QtQuick 2.15
 import QtQuick.Window 2.15
 import QtTest 1.2
+import org.bitcoincore.qt 1.0
 import "../../qml/components"
 
 TestCase {
@@ -54,6 +55,21 @@ TestCase {
         property var blockTimeFractions: []
     }
 
+    QtObject {
+        id: buildingBlockModelMock
+        property bool available: false
+        property int height: 0
+        property int transactionCount: 0
+        property real minFeeRate: -1
+        property real maxFeeRate: -1
+        property int tipTransactionCount: -1
+        property double tipTime: 0
+        property bool active: false
+        function setViewerActive(viewer, active) {
+            buildingBlockModelMock.active = active
+        }
+    }
+
     Component {
         id: blockClockComponent
         BlockClock {
@@ -63,6 +79,7 @@ TestCase {
             chainModelRef: chainModelMock
             blockClockModelRef: blockClockModelMock
             networkStatusModelRef: networkStatusModelMock
+            buildingBlockModelRef: buildingBlockModelMock
         }
     }
 
@@ -97,6 +114,35 @@ TestCase {
         chainModelMock.networkName = "REGTEST"
         blockClockModelMock.currentTimeFraction = 0.25
         blockClockModelMock.blockTimeFractions = []
+        buildingBlockModelMock.available = false
+        buildingBlockModelMock.height = 0
+        buildingBlockModelMock.transactionCount = 0
+        buildingBlockModelMock.minFeeRate = -1
+        buildingBlockModelMock.maxFeeRate = -1
+        buildingBlockModelMock.tipTransactionCount = -1
+        buildingBlockModelMock.tipTime = 0
+        buildingBlockModelMock.active = false
+    }
+
+    // A synced node building block 123,457 on block 123,456, mined eight
+    // minutes ago.
+    function setUpBuildingBlock() {
+        nodeModelMock.numPeers = 1
+        nodeModelMock.numOutboundPeers = 1
+        nodeModelMock.initialSyncComplete = true
+        nodeModelMock.verificationProgress = 1
+        nodeModelMock.blockTipHeight = 123456
+        buildingBlockModelMock.available = true
+        buildingBlockModelMock.height = 123457
+        buildingBlockModelMock.transactionCount = 2341
+        buildingBlockModelMock.minFeeRate = 1
+        buildingBlockModelMock.maxFeeRate = 14.2
+        buildingBlockModelMock.tipTransactionCount = 3412
+        buildingBlockModelMock.tipTime = Date.now() - (8 * 60 + 5) * 1000
+    }
+
+    function formatCount(count) {
+        return Number(count).toLocaleString(Qt.locale(), "f", 0)
     }
 
     function createClock(properties) {
@@ -273,6 +319,106 @@ TestCase {
         compare(clock.state, "BLOCKCLOCK")
         compare(clock.header, Number(nodeModelMock.blockTipHeight).toLocaleString(Qt.locale(), "f", 0))
         compare(clock.subText, "Blocktime")
+    }
+
+    function test_building_block_replaces_blocktime() {
+        resetMocks()
+        setUpBuildingBlock()
+        const clock = createClock({ parentWidth: 2400, parentHeight: 2400 })
+
+        compare(clock.state, "BLOCKCLOCK")
+        compare(clock.header, formatCount(123456))
+        compare(clock.subText, "8 minutes ago · " + formatCount(3412) + " tx")
+        const pill = findChild(clock, "blockClockBuildingBlock")
+        verify(pill.visible)
+        compare(pill.text, "Building " + formatCount(123457) + " · " + formatCount(2341) + " tx · 1–14 sat/vB")
+
+        // The newest arc is painted apart, so it can breathe.
+        compare(findChild(clock, "blockClockDial").blockLayer, BlockClockDial.SettledBlocks)
+        const newest = findChild(clock, "blockClockNewestBlock")
+        verify(newest.visible)
+        compare(newest.blockLayer, BlockClockDial.NewestBlock)
+        tryVerify(() => clock.buildingPulse < 0.9)
+        compare(newest.opacity, clock.buildingPulseOpacity)
+    }
+
+    function test_building_block_shows_one_fee_rate_and_empty_blocks() {
+        resetMocks()
+        setUpBuildingBlock()
+        buildingBlockModelMock.minFeeRate = 0.123
+        buildingBlockModelMock.maxFeeRate = 0.12
+        const clock = createClock({ parentWidth: 2400, parentHeight: 2400 })
+        const pill = findChild(clock, "blockClockBuildingBlock")
+        compare(pill.text, "Building " + formatCount(123457) + " · " + formatCount(2341) + " tx · 0.12 sat/vB")
+
+        buildingBlockModelMock.transactionCount = 0
+        buildingBlockModelMock.minFeeRate = -1
+        buildingBlockModelMock.maxFeeRate = -1
+        compare(pill.text, "Building " + formatCount(123457) + " · 0 tx")
+    }
+
+    function test_building_block_waits_for_the_tip_it_builds_on() {
+        resetMocks()
+        setUpBuildingBlock()
+        // The template still builds on the previous tip.
+        buildingBlockModelMock.height = 123456
+        const clock = createClock({ parentWidth: 2400, parentHeight: 2400 })
+
+        compare(clock.state, "BLOCKCLOCK")
+        compare(clock.subText, "Blocktime")
+        verify(!findChild(clock, "blockClockBuildingBlock").visible)
+        verify(!findChild(clock, "blockClockNewestBlock").visible)
+        compare(findChild(clock, "blockClockDial").blockLayer, BlockClockDial.AllBlocks)
+
+        buildingBlockModelMock.height = 123457
+        compare(clock.subText, "8 minutes ago · " + formatCount(3412) + " tx")
+        verify(findChild(clock, "blockClockBuildingBlock").visible)
+    }
+
+    function test_building_block_pill_shortens_on_small_dials() {
+        resetMocks()
+        setUpBuildingBlock()
+        // From the largest dial to the smallest, the pill shows fee rates (3),
+        // then the height (2), then neither (1), then hides (0), and always fits.
+        let previousDetail = 3
+        const details = {}
+        for (let size = 2400; size >= 480; size -= 120) {
+            const clock = createClock({ parentWidth: size, parentHeight: size })
+            const dial = findChild(clock, "blockClockDial")
+            const pill = findChild(clock, "blockClockBuildingBlock")
+            const detail = !pill.visible ? 0
+                : pill.text.indexOf("sat/vB") >= 0 ? 3
+                : pill.text.indexOf(formatCount(123457)) >= 0 ? 2 : 1
+            if (pill.visible) {
+                verify(pill.implicitWidth <= dial.width * 4 / 5 + 0.5,
+                       "pill " + pill.implicitWidth + " wide in a dial " + dial.width + " wide")
+            }
+            verify(detail <= previousDetail, "more detail at size " + size)
+            previousDetail = detail
+            details[detail] = true
+        }
+        verify(details[3])
+        verify(Object.keys(details).length >= 3)
+    }
+
+    function test_building_block_refreshes_only_while_presented() {
+        resetMocks()
+        setUpBuildingBlock()
+        const clock = createClock()
+        verify(buildingBlockModelMock.active)
+
+        clock.renderingActive = false
+        verify(!buildingBlockModelMock.active)
+        compare(clock.buildingPulse, 1)
+        clock.renderingActive = true
+        verify(buildingBlockModelMock.active)
+
+        // Not while the clock shows sync progress.
+        nodeModelMock.initialSyncComplete = false
+        nodeModelMock.verificationProgress = 0.5
+        compare(clock.state, "IBD")
+        verify(!buildingBlockModelMock.active)
+        verify(!findChild(clock, "blockClockBuildingBlock").visible)
     }
 
     function test_core_ibd_state_overrides_rounded_verification_completion() {

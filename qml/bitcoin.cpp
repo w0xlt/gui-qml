@@ -44,6 +44,7 @@
 #include <qml/models/bitcoinaddress.h>
 #include <qml/models/bitcoinurimodel.h>
 #include <qml/models/blockclockmodel.h>
+#include <qml/models/buildingblockmodel.h>
 #include <qml/models/bumptransactionmodel.h>
 #include <qml/models/chainmodel.h>
 #include <qml/models/debuglogmodel.h>
@@ -721,6 +722,12 @@ int QmlGuiMain(int argc, char* argv[])
     QObject::connect(&node_model, &NodeModel::blockTipTimeChanged, &block_clock_model, &BlockClockModel::recordBlockTime);
     QObject::connect(&node_model, &NodeModel::chainStateReady, &block_clock_model, &BlockClockModel::initializeHistory);
 
+    BuildingBlockModel building_block_model{*node};
+    QObject::connect(&node_model, &NodeModel::chainStateReady, &building_block_model, &BuildingBlockModel::start);
+    QObject::connect(&node_model, &NodeModel::blockTipHeightChanged, &building_block_model, &BuildingBlockModel::refresh);
+    shutdown_coordinator.addParticipant(&building_block_model, &BuildingBlockModel::drained,
+                                        [&] { building_block_model.beginShutdown(); });
+
 
     DesktopWindowBehaviorModel desktop_window_behavior_model;
     DesktopTrayIconController desktop_tray_icon_controller;
@@ -764,6 +771,7 @@ int QmlGuiMain(int argc, char* argv[])
     engine->rootContext()->setContextProperty("nodeModel", &node_model);
     engine->rootContext()->setContextProperty("chainModel", &chain_model);
     engine->rootContext()->setContextProperty("blockClockModel", &block_clock_model);
+    engine->rootContext()->setContextProperty("buildingBlockModel", &building_block_model);
     engine->rootContext()->setContextProperty("peerTableModel", &peer_model);
     engine->rootContext()->setContextProperty("peerListModelProxy", &peer_model_sort_proxy);
     engine->rootContext()->setContextProperty("banListModel", &ban_list_model);

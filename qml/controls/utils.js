@@ -16,11 +16,12 @@ function nodeConnectionIcon(numPeers) {
     return "image://images/node-4-connections"
 }
 
-function formatRelativeTime(isoString) {
+// Relative to now, or to the given time.
+function formatRelativeTime(isoString, now) {
     if (!isoString) return ""
     var then = new Date(isoString)
-    var now = new Date()
-    var diffSec = Math.floor((now - then) / 1000)
+    var current = now === undefined ? new Date() : new Date(now)
+    var diffSec = Math.floor((current - then) / 1000)
     if (diffSec < 60) return qsTr("just now")
     var m = Math.floor(diffSec / 60)
     if (diffSec < 3600) return m === 1 ? qsTr("1 minute ago") : qsTr("%1 minutes ago").arg(m)
@@ -28,6 +29,14 @@ function formatRelativeTime(isoString) {
     if (diffSec < 86400) return h === 1 ? qsTr("1 hour ago") : qsTr("%1 hours ago").arg(h)
     var d = Math.floor(diffSec / 86400)
     return d === 1 ? qsTr("1 day ago") : qsTr("%1 days ago").arg(d)
+}
+
+// A fee rate in sat/vB, with more decimals for low rates.
+function formatFeeRate(rate) {
+    var decimals = rate >= 10 ? 0 : rate >= 1 ? 1 : 2
+    var rounded = Number(rate.toFixed(decimals))
+    while (decimals > 0 && Number(rounded.toFixed(decimals - 1)) === rounded) --decimals
+    return rounded.toLocaleString(Qt.locale(), 'f', decimals)
 }
 
 function formatRemainingSyncTime(milliseconds) {

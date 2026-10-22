@@ -13,6 +13,8 @@
 #include <QPainterPath>
 #include <QConicalGradient>
 #include <QPen>
+#include <QPointF>
+#include <QRadialGradient>
 #include <QQuickWindow>
 #include <QtMath>
 #include <QtGlobal>
@@ -370,9 +372,32 @@ void BlockClockDial::setTimeTickColor(QColor color)
     requestRepaint();
 }
 
+void BlockClockDial::setBlockLayer(BlockLayer layer)
+{
+    if (m_block_layer == layer) return;
+    m_block_layer = layer;
+    requestRepaint();
+}
+
+void BlockClockDial::setRingMargin(qreal margin)
+{
+    margin = qMax<qreal>(0.0, margin);
+    if (qFuzzyCompare(m_ring_margin + 1.0, margin + 1.0)) return;
+    m_ring_margin = margin;
+    invalidateSyncedGradient();
+    requestRepaint();
+}
+
+void BlockClockDial::setHeadColor(QColor color)
+{
+    if (m_head_color == color) return;
+    m_head_color = color;
+    requestRepaint();
+}
+
 QRectF BlockClockDial::getBoundsForPen(const QPen & pen)
 {
-    const QRectF bounds = boundingRect();
+    const QRectF bounds = boundingRect().adjusted(m_ring_margin, m_ring_margin, -m_ring_margin, -m_ring_margin);
     const qreal smallest = qMin(bounds.width(), bounds.height());
     QRectF rect = QRectF(
         pen.widthF() / 2.0 + 1,
@@ -413,7 +438,14 @@ void BlockClockDial::paintBlocks(QPainter * painter)
         degreesForArcPixels(m_pen_width + blockSegmentGapPixels(), bounds)};
     const qreal half_boundary_gap{boundary_gap_degrees / 2.0};
     const qreal animated_fraction{qBound<qreal>(0.0, m_animating_max_angle / 360.0, 1.0)};
-    for (const BlockSegment& segment : segments) {
+    for (qsizetype i{0}; i < segments.size(); ++i) {
+        const BlockSegment& segment{segments.at(i)};
+        const bool newest{i == segments.size() - 1};
+        if ((m_block_layer == SettledBlocks && newest) || (m_block_layer == NewestBlock && !newest)) {
+            if (segment.end_fraction > animated_fraction) break;
+            continue;
+        }
+
         const qreal painted_end{qMin(segment.end_fraction, animated_fraction)};
         const qreal available_degrees{(painted_end - segment.start_fraction) * 360.0};
         if (available_degrees <= boundary_gap_degrees) {
@@ -455,7 +487,34 @@ void BlockClockDial::paintBlocks(QPainter * painter)
         path.arcTo(bounds, start_angle, end_angle - start_angle);
         painter->drawPath(path);
 
+        if (m_block_layer == NewestBlock) {
+            paintNewestBlockHead(painter, bounds, end_angle, m_confirmation_colors.at(end_color_index));
+        }
         if (segment.end_fraction > animated_fraction) break;
+    }
+}
+
+void BlockClockDial::paintNewestBlockHead(QPainter* painter, const QRectF& bounds, qreal angle, const QColor& color)
+{
+    const qreal radians{qDegreesToRadians(angle)};
+    const QPointF head{bounds.center() +
+                       QPointF{std::cos(radians) * bounds.width(), -std::sin(radians) * bounds.height()} / 2.0};
+
+    // The glow reaches past the ring, into ringMargin.
+    const qreal glow_radius{m_pen_width * 2.6};
+    QColor glow_color{color};
+    glow_color.setAlphaF(0.55);
+    QRadialGradient glow{head, glow_radius};
+    glow.setColorAt(0.0, glow_color);
+    glow_color.setAlphaF(0.0);
+    glow.setColorAt(1.0, glow_color);
+    painter->setPen(Qt::NoPen);
+    painter->setBrush(glow);
+    painter->drawEllipse(head, glow_radius, glow_radius);
+
+    if (m_head_color.isValid()) {
+        painter->setBrush(m_head_color);
+        painter->drawEllipse(head, m_pen_width * 0.24, m_pen_width * 0.24);
     }
 }
 
@@ -658,6 +717,12 @@ void BlockClockDial::paint(QPainter * painter)
         return;
     }
     painter->setRenderHint(QPainter::Antialiasing);
+
+    if (m_block_layer == NewestBlock) {
+        // Painted over a dial that paints everything else.
+        if (!paused() && connected() && synced() && showBlockSegments()) paintBlocks(painter);
+        return;
+    }
 
     paintBackground(painter);
     if (showTimeTicks()) {
