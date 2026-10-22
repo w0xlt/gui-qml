@@ -15,16 +15,16 @@
 /**
  * Paints the current twelve-hour block timeline clockwise from midnight or noon.
  *
- * A point on the dial has one confirmation for each later block boundary. The
- * newest interval therefore has zero confirmations, while older intervals move
- * through the confirmation color palette. Boundaries too close to render as
- * separate rounded segments are coalesced without losing their block count;
- * the resulting segment records both confirmation depths and paints the skipped
- * transitions as a continuous gradient.
+ * Each block is a segment from the block before it to its timestamp, the time
+ * it took to find, in the color of its confirmations. The newest segment, from
+ * the latest block to the current time, is the block being built, with zero
+ * confirmations. A block found too soon after the one before it to be drawn
+ * apart still gets a segment of the smallest size, which moves the end of the
+ * older segments back, so every block remains visible and can be pointed at
+ * with blockAt(), e.g. to show its details while its segment is highlighted.
  *
- * The newest segment, which ends at the current time, is the block being
- * built. It can be painted by a second dial on top, so it can be animated
- * without repainting the others.
+ * The block being built can be painted by a second dial on top, so it can be
+ * animated without repainting the others.
  */
 class BlockClockDial : public QQuickPaintedItem
 {
@@ -55,6 +55,11 @@ class BlockClockDial : public QQuickPaintedItem
     Q_PROPERTY(qreal ringMargin READ ringMargin WRITE setRingMargin)
     /** Marks the current time at the end of the newest segment, if valid. */
     Q_PROPERTY(QColor headColor READ headColor WRITE setHeadColor)
+    /**
+     * Index in blockTimeFractions of a block whose segment is highlighted by
+     * dimming the others, or -1.
+     */
+    Q_PROPERTY(int highlightedBlock READ highlightedBlock WRITE setHighlightedBlock)
 
 public:
     enum BlockLayer {
@@ -90,6 +95,13 @@ public:
     BlockLayer blockLayer() const { return m_block_layer; }
     qreal ringMargin() const { return m_ring_margin; }
     QColor headColor() const { return m_head_color; }
+    int highlightedBlock() const { return m_highlighted_block; }
+
+    /**
+     * Index in blockTimeFractions of the block whose segment is painted at the
+     * point, or -1 if none is, e.g. at the block being built.
+     */
+    Q_INVOKABLE int blockAt(qreal x, qreal y) const;
 
 public Q_SLOTS:
     void setCurrentTimeFraction(qreal fraction);
@@ -112,6 +124,7 @@ public Q_SLOTS:
     void setBlockLayer(BlockLayer layer);
     void setRingMargin(qreal margin);
     void setHeadColor(QColor color);
+    void setHighlightedBlock(int block);
 
 Q_SIGNALS:
     void scaleChanged();
@@ -121,13 +134,14 @@ protected:
     void componentComplete() override;
 
 private:
-    /** Drawable interval and confirmation depths around its ending block cluster. */
+    /** The drawn interval of a block. */
     struct BlockSegment
     {
         qreal start_fraction;
         qreal end_fraction;
-        qsizetype start_confirmations;
-        qsizetype end_confirmations;
+        qsizetype confirmations;
+        /** Index in blockTimeFractions, or -1 for the block being built. */
+        qsizetype block;
     };
 
     void paintConnectingAnimation(QPainter * painter);
@@ -138,11 +152,11 @@ private:
     void paintNewestBlockHead(QPainter* painter, const QRectF& bounds, qreal angle, const QColor& color);
     void paintBackground(QPainter * painter);
     void paintTimeTicks(QPainter * painter);
-    QRectF getBoundsForPen(const QPen & pen);
+    QRectF getBoundsForPen(const QPen & pen) const;
     double degreesPerPixel();
     qreal degreesForArcPixels(qreal pixels, const QRectF& bounds) const;
     qreal blockSegmentGapPixels() const;
-    QList<BlockSegment> coalescedBlockSegments(const QRectF& bounds) const;
+    QList<BlockSegment> blockSegments(const QRectF& bounds) const;
     void setupConnectingGradient(const QPen & pen);
     void setupSyncedGradient(const QRectF& bounds);
     void invalidateSyncedGradient();
@@ -182,6 +196,7 @@ private:
     BlockLayer m_block_layer{AllBlocks};
     qreal m_ring_margin{0};
     QColor m_head_color;
+    int m_highlighted_block{-1};
     QTimer m_animation_timer;
     QTimer m_delay_timer;
     QMetaObject::Connection m_window_visibility_connection;

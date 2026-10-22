@@ -25,6 +25,7 @@ Item {
     property var blockClockModelRef: typeof blockClockModel !== "undefined" ? blockClockModel : null
     property var networkStatusModelRef: typeof networkStatusModel !== "undefined" ? networkStatusModel : null
     property var buildingBlockModelRef: typeof buildingBlockModel !== "undefined" ? buildingBlockModel : null
+    property var blockDetailsModelRef: typeof blockDetailsModel !== "undefined" ? blockDetailsModel : null
     readonly property bool windowVisible: root.Window.window !== null &&
         root.Window.window.visible &&
         root.Window.window.visibility !== Window.Hidden &&
@@ -67,6 +68,7 @@ Item {
         root.buildingBlockModelRef !== null && root.buildingBlockModelRef.available &&
         root.buildingBlockModelRef.height === root.nodeModelRef.blockTipHeight + 1
     readonly property bool wantsBuildingBlock: root.state === "BLOCKCLOCK" && root.presentationActive
+    readonly property bool showsBlockDetails: root.showsBuildingBlock || root.showsPointedBlock
     onWantsBuildingBlockChanged: root.updateBuildingBlockViewer()
     Component.onCompleted: root.updateBuildingBlockViewer()
 
@@ -91,6 +93,18 @@ Item {
         running: root.showsBuildingBlock && root.presentationActive
         onTriggered: root.currentTimeMs = Date.now()
     }
+
+    // Pointing at a block's arc shows the block, and tapping it keeps it shown.
+    // Blocks are indexes in blockTimeFractions, or -1.
+    property int hoveredBlock: -1
+    property int tappedBlock: -1
+    readonly property int pointedBlock: root.state === "BLOCKCLOCK" && root.blockDetailsModelRef !== null
+        ? (root.hoveredBlock >= 0 ? root.hoveredBlock : root.tappedBlock) : -1
+    readonly property bool showsPointedBlock: root.pointedBlock >= 0 && root.blockDetailsModelRef.available
+    onPointedBlockChanged: root.updatePointedBlock()
+    // Indexes change with the blocks.
+    onBlockTimeFractionsChanged: root.forgetPointedBlock()
+    onPresentationActiveChanged: if (!root.presentationActive) root.forgetPointedBlock()
 
     readonly property string latestBlockText: root.showsBuildingBlock && root.buildingBlockModelRef.tipTransactionCount >= 0
         ? qsTr("%1 · %2 tx")
@@ -123,6 +137,7 @@ Item {
         confirmationColors: Theme.color.confirmationColors
         renderingActive: root.presentationActive
         blockLayer: root.showsBuildingBlock ? BlockClockDial.SettledBlocks : BlockClockDial.AllBlocks
+        highlightedBlock: root.pointedBlock
 
         Behavior on backgroundColor {
             ColorAnimation { duration: 150 }
@@ -160,8 +175,25 @@ Item {
         showTimeTicks: false
         confirmationColors: Theme.color.confirmationColors
         headColor: Theme.color.white
+        highlightedBlock: root.pointedBlock
         renderingActive: root.presentationActive && root.showsBuildingBlock
         opacity: root.buildingPulseOpacity
+    }
+
+    MouseArea {
+        id: blockPointer
+        objectName: "blockClockPointer"
+        anchors.fill: dial
+        enabled: root.state === "BLOCKCLOCK" && root.blockDetailsModelRef !== null
+        hoverEnabled: true
+        cursorShape: root.hoveredBlock >= 0 ? Qt.PointingHandCursor : Qt.ArrowCursor
+        onEntered: root.hoveredBlock = dial.blockAt(blockPointer.mouseX, blockPointer.mouseY)
+        onPositionChanged: (mouse) => root.hoveredBlock = dial.blockAt(mouse.x, mouse.y)
+        onExited: root.hoveredBlock = -1
+        onClicked: (mouse) => {
+            const block = dial.blockAt(mouse.x, mouse.y)
+            root.tappedBlock = block === root.tappedBlock ? -1 : block
+        }
     }
 
     Icon {
@@ -175,6 +207,7 @@ Item {
 
     Label {
         id: mainText
+        objectName: "blockClockHeader"
         anchors.centerIn: dial
         font.family: "BitcoinCoreSans"
         font.styleName: "Semi Bold"
@@ -189,10 +222,10 @@ Item {
     TextMetrics {
         id: subTextMetrics
         font.family: "BitcoinCoreSans"
-        // The latest block's details are smaller than the clock's status words.
-        font.styleName: root.showsBuildingBlock ? "Regular" : "Semi Bold"
-        font.pixelSize: root.showsBuildingBlock ? Math.max(12, Math.round(dial.width * (23/500)))
-                                                : Math.max(1, Math.round(dial.width * (9/100)))
+        // Blocks' details are smaller than the clock's status words.
+        font.styleName: root.showsBlockDetails ? "Regular" : "Semi Bold"
+        font.pixelSize: root.showsBlockDetails ? Math.max(12, Math.round(dial.width * (23/500)))
+                                               : Math.max(1, Math.round(dial.width * (9/100)))
         text: subText.text
     }
 
@@ -212,7 +245,7 @@ Item {
             ? Math.max(1, Math.floor(subText.desiredPixelSize * (subText.width - 2) / subText.desiredTextWidth))
             : subText.desiredPixelSize
         elide: Text.ElideRight
-        color: root.showsBuildingBlock ? Theme.color.neutral6 : Theme.color.neutral4
+        color: root.showsBlockDetails ? Theme.color.neutral6 : Theme.color.neutral4
 
         Behavior on color {
             enabled: !subText.estimating
@@ -230,44 +263,80 @@ Item {
 
     }
 
-    StatusPill {
-        id: buildingBlockPill
-        objectName: "blockClockBuildingBlock"
-        // Smaller dials leave out the fee rates, then the height, then the pill.
-        readonly property real textRoom: dial.width * (4/5) - (implicitWidth - textImplicitWidth)
-        readonly property string fullText: root.buildingBlockText(true, true)
-        readonly property string mediumText: root.buildingBlockText(true, false)
-        readonly property string shortText: root.buildingBlockText(false, false)
+    // The block pointed at, or the block being built.
+    Column {
+        id: blockDetails
         anchors.top: subText.bottom
-        anchors.topMargin: dial.width / 40
+        anchors.topMargin: blockDetails.height === 0 ? 0
+            : pointedBlockText.visible ? dial.width / 200 : dial.width / 40
         anchors.horizontalCenter: root.horizontalCenter
-        visible: root.showsBuildingBlock && shortTextMetrics.advanceWidth <= textRoom
-        text: fullTextMetrics.advanceWidth <= textRoom ? fullText
-            : mediumTextMetrics.advanceWidth <= textRoom ? mediumText : shortText
-        accentColor: Theme.color.confirmationColors[0]
-        textColor: Theme.color.neutral8
-        dotOpacity: root.buildingPulseOpacity
+        spacing: dial.width / 40
 
-        TextMetrics {
-            id: fullTextMetrics
-            font: Theme.text.captionStrong.font
-            text: buildingBlockPill.fullText
+        Label {
+            id: pointedBlockText
+            objectName: "blockClockPointedBlock"
+            anchors.horizontalCenter: parent.horizontalCenter
+            width: dial.width * (4/5)
+            visible: root.showsPointedBlock
+            horizontalAlignment: Text.AlignHCenter
+            font.family: "BitcoinCoreSans"
+            font.styleName: "Regular"
+            font.pixelSize: Math.max(11, Math.round(dial.width * (19/500)))
+            fontSizeMode: Text.HorizontalFit
+            minimumPixelSize: 8
+            color: Theme.color.neutral6
+            text: root.showsPointedBlock ? root.pointedBlockText() : ""
         }
-        TextMetrics {
-            id: mediumTextMetrics
-            font: Theme.text.captionStrong.font
-            text: buildingBlockPill.mediumText
+
+        StatusPill {
+            id: pointedBlockPill
+            objectName: "blockClockPointedBlockInterval"
+            anchors.horizontalCenter: parent.horizontalCenter
+            visible: root.showsPointedBlock && text !== "" && implicitWidth <= dial.width * (4/5)
+            text: root.showsPointedBlock && root.blockDetailsModelRef.interval >= 0
+                ? qsTr("Found after %1").arg(Utils.formatInterval(root.blockDetailsModelRef.interval)) : ""
+            showDot: false
+            backgroundColor: Theme.color.neutral2
+            textColor: Theme.color.neutral8
         }
-        TextMetrics {
-            id: shortTextMetrics
-            font: Theme.text.captionStrong.font
-            text: buildingBlockPill.shortText
+
+        StatusPill {
+            id: buildingBlockPill
+            objectName: "blockClockBuildingBlock"
+            // Smaller dials leave out the fee rates, then the height, then the pill.
+            readonly property real textRoom: dial.width * (4/5) - decorationWidth
+            readonly property string fullText: root.buildingBlockText(true, true)
+            readonly property string mediumText: root.buildingBlockText(true, false)
+            readonly property string shortText: root.buildingBlockText(false, false)
+            anchors.horizontalCenter: parent.horizontalCenter
+            visible: root.showsBuildingBlock && !root.showsPointedBlock && shortTextMetrics.advanceWidth <= textRoom
+            text: fullTextMetrics.advanceWidth <= textRoom ? fullText
+                : mediumTextMetrics.advanceWidth <= textRoom ? mediumText : shortText
+            accentColor: Theme.color.confirmationColors[0]
+            textColor: Theme.color.neutral8
+            dotOpacity: root.buildingPulseOpacity
+
+            TextMetrics {
+                id: fullTextMetrics
+                font: Theme.text.captionStrong.font
+                text: buildingBlockPill.fullText
+            }
+            TextMetrics {
+                id: mediumTextMetrics
+                font: Theme.text.captionStrong.font
+                text: buildingBlockPill.mediumText
+            }
+            TextMetrics {
+                id: shortTextMetrics
+                font: Theme.text.captionStrong.font
+                text: buildingBlockPill.shortText
+            }
         }
     }
 
     PeersIndicator {
         objectName: "blockClockPeersIndicator"
-        anchors.top: buildingBlockPill.visible ? buildingBlockPill.bottom : subText.bottom
+        anchors.top: blockDetails.bottom
         anchors.topMargin: dial.width / 10
         anchors.horizontalCenter: root.horizontalCenter
         numOutboundPeers: root.nodeModelRef !== null ? root.nodeModelRef.numOutboundPeers : 0
@@ -304,8 +373,10 @@ Item {
             name: "BLOCKCLOCK"; when: !faulted && !offline && synced && !paused && connected
             PropertyChanges {
                 target: root
-                header: Number(root.nodeModelRef !== null ? root.nodeModelRef.blockTipHeight : 0).toLocaleString(Qt.locale(), 'f', 0)
-                subText: root.latestBlockText !== "" ? root.latestBlockText : "Blocktime"
+                header: root.formatCount(root.showsPointedBlock ? root.blockDetailsModelRef.height
+                    : root.nodeModelRef !== null ? root.nodeModelRef.blockTipHeight : 0)
+                subText: root.showsPointedBlock ? root.pointedBlockMinedText()
+                    : root.latestBlockText !== "" ? root.latestBlockText : "Blocktime"
                 estimating: false
             }
         },
@@ -386,6 +457,44 @@ Item {
 
     function updateBuildingBlockViewer() {
         if (root.buildingBlockModelRef !== null) root.buildingBlockModelRef.setViewerActive(root, root.wantsBuildingBlock)
+    }
+
+    function forgetPointedBlock() {
+        root.hoveredBlock = -1
+        root.tappedBlock = -1
+    }
+
+    function updatePointedBlock() {
+        const model = root.blockDetailsModelRef
+        if (model === null) return
+        if (root.pointedBlock < 0) {
+            model.clear()
+            return
+        }
+        // Blocks can share a timestamp.
+        const time = root.blockClockModelRef.blockTime(root.pointedBlock)
+        let ordinal = 0
+        while (ordinal < root.pointedBlock && root.blockClockModelRef.blockTime(root.pointedBlock - ordinal - 1) === time) ++ordinal
+        model.select(time, ordinal)
+    }
+
+    function formatCount(count) {
+        return Number(count).toLocaleString(Qt.locale(), 'f', 0)
+    }
+
+    function pointedBlockMinedText() {
+        const model = root.blockDetailsModelRef
+        const confirmations = root.nodeModelRef.blockTipHeight - model.height + 1
+        return qsTr("Mined %1").arg(new Date(model.time).toLocaleTimeString(Qt.locale(), Locale.ShortFormat)) + " · "
+            + (confirmations === 1 ? qsTr("1 confirmation") : qsTr("%1 confirmations").arg(root.formatCount(confirmations)))
+    }
+
+    function pointedBlockText() {
+        const model = root.blockDetailsModelRef
+        let text = qsTr("%1 tx").arg(root.formatCount(model.transactionCount))
+        if (model.size >= 0) text += " · " + Utils.formatBlockSize(model.size)
+        if (model.medianFeeRate >= 0) text += " · " + qsTr("median %1 sat/vB").arg(Utils.formatFeeRate(model.medianFeeRate))
+        return text
     }
 
     function buildingBlockText(withHeight, withFeeRates) {

@@ -14,6 +14,7 @@
 
 #include <atomic>
 #include <cmath>
+#include <utility>
 
 namespace {
 constexpr int DIAL_SIZE{120};
@@ -133,14 +134,17 @@ private Q_SLOTS:
     void paintDoesNotAdvanceAnimationState();
     void equalBlockTimestampsPreserveConfirmationDepth();
     void distinctBlocksUseExactConfirmationColors();
-    void futureBlocksPreserveConfirmationDepth_data();
-    void futureBlocksPreserveConfirmationDepth();
-    void coalescedBlocksUseConfirmationGradient();
-    void coalescedBlocksSaturateAtHighestConfirmationColor();
-    void blocksCoalescedWithCurrentTimePreserveConfirmationDepth();
-    void blocksCoalescedWithPeriodStartDoNotShiftVisibleDepth();
+    void futureBlocksKeepASegmentBeforeTheBlockBeingBuilt_data();
+    void futureBlocksKeepASegmentBeforeTheBlockBeingBuilt();
+    void blocksFoundTogetherKeepASegmentEach();
+    void blocksFoundTogetherSaturateAtHighestConfirmationColor();
+    void recentBlocksKeepASegmentBeforeTheBlockBeingBuilt();
+    void blocksWithoutRoomAfterThePeriodStartAreLeftOut();
     void layersSplitSettledAndNewestSegments();
     void newestBlockGlowsIntoTheRingMargin();
+    void blockAtFindsTheBlockOfASegment();
+    void blockAtFindsRecentAndFutureBlocks();
+    void highlightedBlockDimsTheOtherSegments();
 };
 
 void BlockClockDialTests::ibdProgressRendersImmediateHalfArc()
@@ -366,6 +370,9 @@ void BlockClockDialTests::equalBlockTimestampsPreserveConfirmationDepth()
     QCOMPARE(dial.blockTimeFractions().size(), 3);
     const QImage image{RenderDial(dial)};
     QVERIFY(ColorDistance(image.pixelColor(DialPoint(0.125)), CONFIRMATION_COLORS[3]) < 10);
+    // The older of the two blocks keeps a segment before the newer one's end.
+    QVERIFY(ColorDistance(image.pixelColor(DialPoint(0.35)), CONFIRMATION_COLORS[2]) < 10);
+    QVERIFY(ColorDistance(image.pixelColor(DialPoint(0.4715)), CONFIRMATION_COLORS[1]) < 10);
     QVERIFY(ColorDistance(image.pixelColor(DialPoint(0.625)), CONFIRMATION_COLORS[0]) < 10);
 }
 
@@ -392,10 +399,13 @@ void BlockClockDialTests::distinctBlocksUseExactConfirmationColors()
     }
 }
 
-void BlockClockDialTests::futureBlocksPreserveConfirmationDepth_data()
+// In the test dial, the smallest segment spans 19 pixels of a 53 pixel radius.
+constexpr qreal SMALLEST_SEGMENT{19.0 / 53.0 / (2.0 * M_PI)};
+
+void BlockClockDialTests::futureBlocksKeepASegmentBeforeTheBlockBeingBuilt_data()
 {
     QTest::addColumn<QList<qreal>>("blocks");
-    QTest::addColumn<int>("future_confirmations");
+    QTest::addColumn<int>("future_blocks");
 
     QTest::newRow("ahead-of-now") << QList<qreal>{0.25, 0.50, 0.76} << 1;
     QTest::newRow("equal-future-timestamps") << QList<qreal>{0.25, 0.50, 0.76, 0.76} << 2;
@@ -405,67 +415,61 @@ void BlockClockDialTests::futureBlocksPreserveConfirmationDepth_data()
     QTest::newRow("saturated") << QList<qreal>{0.25, 0.50, 0.76, 0.80, 0.85, 0.90, 0.95, 1.0} << 6;
 }
 
-void BlockClockDialTests::futureBlocksPreserveConfirmationDepth()
+void BlockClockDialTests::futureBlocksKeepASegmentBeforeTheBlockBeingBuilt()
 {
     QFETCH(QList<qreal>, blocks);
-    QFETCH(int, future_confirmations);
+    QFETCH(int, future_blocks);
     BlockClockDial dial;
     ConfigureSyncedDial(dial, 0.75, blocks);
 
     const QImage image{RenderDial(dial)};
-    VerifyDialColor(image, 0.125, CONFIRMATION_COLORS[qMin(5, future_confirmations + 2)]);
-    VerifyDialColor(image, 0.375, CONFIRMATION_COLORS[qMin(5, future_confirmations + 1)]);
-    VerifyDialColor(image, 0.625, CONFIRMATION_COLORS[qMin(5, future_confirmations)]);
+    VerifyDialColor(image, 0.125, CONFIRMATION_COLORS[qMin(5, future_blocks + 2)]);
+    VerifyDialColor(image, 0.30, CONFIRMATION_COLORS[qMin(5, future_blocks + 1)]);
+    // The newest one ends a smallest segment before the current time.
+    VerifyDialColor(image, 0.75 - 1.5 * SMALLEST_SEGMENT, CONFIRMATION_COLORS[1]);
+    VerifyDialColor(image, 0.75 - 0.5 * SMALLEST_SEGMENT, CONFIRMATION_COLORS[0]);
     VerifyDialColor(image, 0.875, BACKGROUND_COLOR);
 }
 
-void BlockClockDialTests::coalescedBlocksUseConfirmationGradient()
+void BlockClockDialTests::blocksFoundTogetherKeepASegmentEach()
 {
     BlockClockDial dial;
     ConfigureSyncedDial(dial, 0.75, {0.25, 0.2501, 0.2502});
 
+    // Each ends a smallest segment before the next one does.
     const QImage image{RenderDial(dial)};
-    const QColor older_color{image.pixelColor(DialPoint(0.05))};
-    const QColor middle_color{image.pixelColor(DialPoint(0.125))};
-    const QColor newer_color{image.pixelColor(DialPoint(0.20))};
-
-    QCOMPARE(dial.blockTimeFractions().size(), 3);
-    QVERIFY(ColorDistance(older_color, CONFIRMATION_COLORS[3]) <
-            ColorDistance(older_color, CONFIRMATION_COLORS[0]));
-    QVERIFY(ColorDistance(newer_color, CONFIRMATION_COLORS[0]) <
-            ColorDistance(newer_color, CONFIRMATION_COLORS[3]));
-    QVERIFY(older_color.green() > middle_color.green());
-    QVERIFY(middle_color.green() > newer_color.green());
-    QVERIFY(ColorDistance(older_color, newer_color) > 50);
+    VerifyDialColor(image, 0.05, CONFIRMATION_COLORS[3]);
+    VerifyDialColor(image, 0.2502 - 1.5 * SMALLEST_SEGMENT, CONFIRMATION_COLORS[2]);
+    VerifyDialColor(image, 0.2502 - 0.5 * SMALLEST_SEGMENT, CONFIRMATION_COLORS[1]);
+    VerifyDialColor(image, 0.2502 - SMALLEST_SEGMENT, BACKGROUND_COLOR);
     VerifyDialColor(image, 0.50, CONFIRMATION_COLORS[0]);
 }
 
-void BlockClockDialTests::coalescedBlocksSaturateAtHighestConfirmationColor()
+void BlockClockDialTests::blocksFoundTogetherSaturateAtHighestConfirmationColor()
 {
     BlockClockDial dial;
-    ConfigureSyncedDial(dial, 0.75, {0.25, 0.2501, 0.2502, 0.2503, 0.2504, 0.2505});
+    ConfigureSyncedDial(dial, 0.95, {0.50, 0.5001, 0.5002, 0.5003, 0.5004, 0.5005});
 
     const QImage image{RenderDial(dial)};
-    VerifyDialColor(image, 0.025, CONFIRMATION_COLORS[5]);
-    VerifyDialColor(image, 0.50, CONFIRMATION_COLORS[0]);
+    VerifyDialColor(image, 0.10, CONFIRMATION_COLORS[5]);
+    for (int confirmations{1}; confirmations <= 5; ++confirmations) {
+        VerifyDialColor(image, 0.5005 - (confirmations - 0.5) * SMALLEST_SEGMENT, CONFIRMATION_COLORS[confirmations]);
+    }
+    VerifyDialColor(image, 0.70, CONFIRMATION_COLORS[0]);
 }
 
-void BlockClockDialTests::blocksCoalescedWithCurrentTimePreserveConfirmationDepth()
+void BlockClockDialTests::recentBlocksKeepASegmentBeforeTheBlockBeingBuilt()
 {
     BlockClockDial dial;
     ConfigureSyncedDial(dial, 0.75, {0.7498, 0.7499});
 
     const QImage image{RenderDial(dial)};
-    const QColor older_color{image.pixelColor(DialPoint(0.10))};
-    const QColor current_color{image.pixelColor(DialPoint(0.70))};
-
-    QVERIFY(ColorDistance(older_color, CONFIRMATION_COLORS[2]) <
-            ColorDistance(older_color, CONFIRMATION_COLORS[0]));
-    QVERIFY(ColorDistance(current_color, CONFIRMATION_COLORS[0]) <
-            ColorDistance(current_color, CONFIRMATION_COLORS[2]));
+    VerifyDialColor(image, 0.10, CONFIRMATION_COLORS[2]);
+    VerifyDialColor(image, 0.75 - 1.5 * SMALLEST_SEGMENT, CONFIRMATION_COLORS[1]);
+    VerifyDialColor(image, 0.75 - 0.5 * SMALLEST_SEGMENT, CONFIRMATION_COLORS[0]);
 }
 
-void BlockClockDialTests::blocksCoalescedWithPeriodStartDoNotShiftVisibleDepth()
+void BlockClockDialTests::blocksWithoutRoomAfterThePeriodStartAreLeftOut()
 {
     BlockClockDial dial;
     ConfigureSyncedDial(dial, 0.75, {0.0001, 0.25});
@@ -530,6 +534,72 @@ void BlockClockDialTests::newestBlockGlowsIntoTheRingMargin()
     const QPoint outside{qRound(DIAL_SIZE / 2.0 + qSin(angle) * outside_radius),
                          qRound(DIAL_SIZE / 2.0 - qCos(angle) * outside_radius)};
     QVERIFY(image.pixelColor(outside + offset).alpha() > 0);
+}
+
+
+namespace {
+int BlockAt(const BlockClockDial& dial, qreal fraction)
+{
+    const QPoint point{DialPoint(fraction)};
+    return dial.blockAt(point.x(), point.y());
+}
+} // namespace
+
+void BlockClockDialTests::blockAtFindsTheBlockOfASegment()
+{
+    BlockClockDial dial;
+    ConfigureSyncedDial(dial, 0.75, {0.15, 0.30, 0.3001, 0.45});
+
+    QCOMPARE(BlockAt(dial, 0.10), 0);
+    // Blocks found together each have a segment.
+    QCOMPARE(BlockAt(dial, 0.20), 1);
+    QCOMPARE(BlockAt(dial, 0.28), 2);
+    QCOMPARE(BlockAt(dial, 0.40), 3);
+    // The block being built.
+    QCOMPARE(BlockAt(dial, 0.60), -1);
+    // Past the current time, and away from the ring.
+    QCOMPARE(BlockAt(dial, 0.80), -1);
+    QCOMPARE(dial.blockAt(DIAL_SIZE / 2.0, DIAL_SIZE / 2.0), -1);
+    // Near enough the ring.
+    QCOMPARE(dial.blockAt(DIAL_SIZE / 2.0, 0), 0);
+
+    // Only while segments are painted.
+    dial.setSynced(false);
+    QCOMPARE(BlockAt(dial, 0.10), -1);
+}
+
+void BlockClockDialTests::blockAtFindsRecentAndFutureBlocks()
+{
+    BlockClockDial dial;
+    // A block timestamped ahead of the clock ends before the block being built.
+    ConfigureSyncedDial(dial, 0.75, {0.15, 0.90});
+    QCOMPARE(BlockAt(dial, 0.10), 0);
+    QCOMPARE(BlockAt(dial, 0.50), 1);
+    QCOMPARE(BlockAt(dial, 0.74), -1);
+
+    dial.setBlockTimeFractions({0.15, 0.7499});
+    QCOMPARE(BlockAt(dial, 0.50), 1);
+    QCOMPARE(BlockAt(dial, 0.74), -1);
+}
+
+void BlockClockDialTests::highlightedBlockDimsTheOtherSegments()
+{
+    BlockClockDial dial;
+    ConfigureSyncedDial(dial, 0.75, {0.25, 0.50});
+    dial.setHighlightedBlock(1);
+
+    const QImage image{RenderDial(dial)};
+    VerifyDialColor(image, 0.375, CONFIRMATION_COLORS[1]);
+    for (const auto& [fraction, color] : {std::pair{0.125, CONFIRMATION_COLORS[2]}, std::pair{0.625, CONFIRMATION_COLORS[0]}}) {
+        const QColor dimmed{image.pixelColor(DialPoint(fraction))};
+        QVERIFY2(ColorDistance(dimmed, color) > 150, qPrintable(dimmed.name()));
+        QVERIFY2(ColorDistance(dimmed, BACKGROUND_COLOR) > 50, qPrintable(dimmed.name()));
+    }
+
+    dial.setHighlightedBlock(-1);
+    const QImage plain{RenderDial(dial)};
+    VerifyDialColor(plain, 0.125, CONFIRMATION_COLORS[2]);
+    VerifyDialColor(plain, 0.625, CONFIRMATION_COLORS[0]);
 }
 
 #ifdef BITCOINQML_NO_TEST_MAIN

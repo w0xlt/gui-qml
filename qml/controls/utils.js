@@ -39,6 +39,21 @@ function formatFeeRate(rate) {
     return rounded.toLocaleString(Qt.locale(), 'f', decimals)
 }
 
+// Decimal units, like block explorers.
+function formatBlockSize(bytes) {
+    if (bytes >= 1000000) return qsTr("%1 MB").arg((bytes / 1000000).toLocaleString(Qt.locale(), 'f', 2))
+    if (bytes >= 1000) return qsTr("%1 kB").arg((bytes / 1000).toLocaleString(Qt.locale(), 'f', bytes >= 10000 ? 0 : 1))
+    return qsTr("%1 B").arg(bytes)
+}
+
+// A time between blocks, in seconds.
+function formatInterval(seconds) {
+    if (seconds < 60) return qsTr("%1 s").arg(seconds)
+    var minutes = Math.round(seconds / 60)
+    if (minutes < 60) return qsTr("%1 min").arg(minutes)
+    return qsTr("%1 h %2 min").arg(Math.floor(minutes / 60)).arg(minutes % 60)
+}
+
 function formatRemainingSyncTime(milliseconds) {
     var minutes = Math.floor(milliseconds / 60000);
     var seconds = Math.floor((milliseconds % 60000) / 1000);

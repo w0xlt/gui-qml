@@ -127,6 +127,11 @@ void BlockClockModelTests::loadedHistoryPreservesEqualTimestamps()
     const QList<qreal> expected{1.0 / 12.0, 2.0 / 12.0, 2.0 / 12.0};
     QCOMPARE(model.blockTimeFractions(), expected);
     QCOMPARE(history_spy.count(), 1);
+    // The timestamps of the blocks at the fractions' indexes.
+    QCOMPARE(model.blockTime(0), model.periodStart() + 3600);
+    QCOMPARE(model.blockTime(2), model.periodStart() + 7200);
+    QCOMPARE(model.blockTime(3), 0);
+    QCOMPARE(model.blockTime(-1), 0);
     model.initializeHistory();
     QCOMPARE(model.blockTimeFractions(), expected);
     QCOMPARE(history_spy.count(), 1);

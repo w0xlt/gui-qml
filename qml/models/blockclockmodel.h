@@ -67,6 +67,9 @@ public:
     QList<qreal> blockTimeFractions() const { return m_block_time_fractions; }
     bool timerActive() const { return m_clock_timer.isActive(); }
 
+    /** Timestamp of the block at @p index of blockTimeFractions, or 0. */
+    Q_INVOKABLE qint64 blockTime(int index) const { return m_timeline.block_timestamps.value(index); }
+
     /** Return the midnight/noon boundary containing @p current_time. */
     static qint64 PeriodStartFor(const QDateTime& current_time);
 

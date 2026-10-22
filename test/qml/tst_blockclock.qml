@@ -53,6 +53,29 @@ TestCase {
         id: blockClockModelMock
         property real currentTimeFraction: 0.25
         property var blockTimeFractions: []
+        property var blockTimes: []
+        function blockTime(index) {
+            return blockClockModelMock.blockTimes[index] || 0
+        }
+    }
+
+    QtObject {
+        id: blockDetailsModelMock
+        property bool available: false
+        property int height: 0
+        property double time: 0
+        property int transactionCount: 0
+        property double size: -1
+        property real medianFeeRate: -1
+        property double interval: -1
+        property var selection: null
+        function select(time, ordinal) {
+            blockDetailsModelMock.selection = [time, ordinal]
+        }
+        function clear() {
+            blockDetailsModelMock.selection = null
+            blockDetailsModelMock.available = false
+        }
     }
 
     QtObject {
@@ -80,6 +103,7 @@ TestCase {
             blockClockModelRef: blockClockModelMock
             networkStatusModelRef: networkStatusModelMock
             buildingBlockModelRef: buildingBlockModelMock
+            blockDetailsModelRef: blockDetailsModelMock
         }
     }
 
@@ -114,6 +138,15 @@ TestCase {
         chainModelMock.networkName = "REGTEST"
         blockClockModelMock.currentTimeFraction = 0.25
         blockClockModelMock.blockTimeFractions = []
+        blockClockModelMock.blockTimes = []
+        blockDetailsModelMock.available = false
+        blockDetailsModelMock.height = 0
+        blockDetailsModelMock.time = 0
+        blockDetailsModelMock.transactionCount = 0
+        blockDetailsModelMock.size = -1
+        blockDetailsModelMock.medianFeeRate = -1
+        blockDetailsModelMock.interval = -1
+        blockDetailsModelMock.selection = null
         buildingBlockModelMock.available = false
         buildingBlockModelMock.height = 0
         buildingBlockModelMock.transactionCount = 0
@@ -143,6 +176,53 @@ TestCase {
 
     function formatCount(count) {
         return Number(count).toLocaleString(Qt.locale(), "f", 0)
+    }
+
+    function formatTime(ms) {
+        return new Date(ms).toLocaleTimeString(Qt.locale(), Locale.ShortFormat)
+    }
+
+    // Blocks 123,399, 123,400 and 123,401, the last two found together,
+    // before the block being built.
+    function setUpPastBlocks() {
+        setUpBuildingBlock()
+        nodeModelMock.blockTipHeight = 123401
+        buildingBlockModelMock.height = 123402
+        blockClockModelMock.currentTimeFraction = 0.5
+        blockClockModelMock.blockTimeFractions = [0.05, 0.15, 0.1501]
+        blockClockModelMock.blockTimes = [1000, 2000, 2001]
+    }
+
+    // As the model describes the block once it has read it.
+    function readBlock(height, time) {
+        blockDetailsModelMock.height = height
+        blockDetailsModelMock.time = time
+        blockDetailsModelMock.transactionCount = 3114
+        blockDetailsModelMock.size = 1210000
+        blockDetailsModelMock.medianFeeRate = 2
+        blockDetailsModelMock.interval = 1200
+        blockDetailsModelMock.available = true
+    }
+
+    // A point on the ring, in the clock.
+    function ringPoint(clock, fraction) {
+        const dial = findChild(clock, "blockClockDial")
+        const radius = dial.width / 2 - dial.penWidth / 2 - 1
+        const angle = fraction * 2 * Math.PI
+        return dial.mapToItem(clock, dial.width / 2 + Math.sin(angle) * radius,
+                              dial.height / 2 - Math.cos(angle) * radius)
+    }
+
+    // Once the dial has drawn the arcs of the past blocks.
+    function waitForArcs(clock) {
+        const dial = findChild(clock, "blockClockDial")
+        const point = clock.mapToItem(dial, ringPoint(clock, 0.1495))
+        tryVerify(() => dial.blockAt(point.x, point.y) === 2)
+    }
+
+    function moveAway(clock) {
+        const dial = findChild(clock, "blockClockDial")
+        mouseMove(clock, dial.x + dial.width / 2, dial.y + dial.height / 2)
     }
 
     function createClock(properties) {
@@ -419,6 +499,135 @@ TestCase {
         compare(clock.state, "IBD")
         verify(!buildingBlockModelMock.active)
         verify(!findChild(clock, "blockClockBuildingBlock").visible)
+    }
+
+    function test_pointing_at_an_arc_shows_its_block() {
+        resetMocks()
+        setUpPastBlocks()
+        const clock = createClock()
+        const dial = findChild(clock, "blockClockDial")
+        const newest = findChild(clock, "blockClockNewestBlock")
+        waitForArcs(clock)
+        const point = ringPoint(clock, 0.03)
+
+        mouseMove(clock, point.x, point.y)
+        compare(blockDetailsModelMock.selection, [1000, 0])
+        // The arc stands out before the block is read.
+        compare(dial.highlightedBlock, 0)
+        compare(newest.highlightedBlock, 0)
+        compare(clock.header, formatCount(123401))
+
+        const time = Date.now() - 30 * 60 * 1000
+        readBlock(123399, time)
+        verify(clock.showsPointedBlock)
+        compare(clock.header, formatCount(123399))
+        compare(clock.subText, "Mined " + formatTime(time) + " · 3 confirmations")
+        compare(findChild(clock, "blockClockPointedBlock").text,
+                formatCount(3114) + " tx · " + Number(1.21).toLocaleString(Qt.locale(), "f", 2)
+                + " MB · median 2 sat/vB")
+        const pill = findChild(clock, "blockClockPointedBlockInterval")
+        compare(pill.text, "Found after 20 min")
+        verify(!findChild(clock, "blockClockBuildingBlock").visible)
+
+        blockDetailsModelMock.height = 123401
+        blockDetailsModelMock.size = -1
+        blockDetailsModelMock.medianFeeRate = -1
+        blockDetailsModelMock.interval = -1
+        compare(clock.subText, "Mined " + formatTime(time) + " · 1 confirmation")
+        compare(findChild(clock, "blockClockPointedBlock").text, formatCount(3114) + " tx")
+        compare(pill.text, "")
+        verify(!pill.visible)
+
+        // Leaving the ring shows the latest block and the one being built.
+        mouseMove(clock, dial.x + dial.width / 2, dial.y + dial.height / 2)
+        compare(blockDetailsModelMock.selection, null)
+        compare(dial.highlightedBlock, -1)
+        verify(!clock.showsPointedBlock)
+        compare(clock.header, formatCount(123401))
+        compare(clock.subText, "8 minutes ago · " + formatCount(3412) + " tx")
+        verify(!findChild(clock, "blockClockPointedBlock").visible)
+    }
+
+    function test_blocks_found_together_are_pointed_at_one_by_one() {
+        resetMocks()
+        setUpPastBlocks()
+        const clock = createClock()
+        const dial = findChild(clock, "blockClockDial")
+        waitForArcs(clock)
+
+        const older = ringPoint(clock, 0.10)
+        mouseMove(clock, older.x, older.y)
+        compare(blockDetailsModelMock.selection, [2000, 0])
+        compare(dial.highlightedBlock, 1)
+        const newer = ringPoint(clock, 0.1495)
+        mouseMove(clock, newer.x, newer.y)
+        compare(blockDetailsModelMock.selection, [2001, 0])
+        compare(dial.highlightedBlock, 2)
+
+        // Blocks sharing a timestamp are told apart by their order.
+        blockClockModelMock.blockTimes = [1000, 2000, 2000]
+        moveAway(clock)
+        mouseMove(clock, newer.x, newer.y)
+        compare(blockDetailsModelMock.selection, [2000, 1])
+    }
+
+    function test_tapping_an_arc_keeps_its_block() {
+        resetMocks()
+        setUpPastBlocks()
+        const clock = createClock()
+        const dial = findChild(clock, "blockClockDial")
+        waitForArcs(clock)
+        const point = ringPoint(clock, 0.03)
+
+        mouseClick(clock, point.x, point.y)
+        compare(blockDetailsModelMock.selection, [1000, 0])
+        readBlock(123399, Date.now())
+        // Kept when the pointer leaves, as with touch.
+        moveAway(clock)
+        compare(dial.highlightedBlock, 0)
+        compare(clock.header, formatCount(123399))
+
+        // Until it is tapped again.
+        mouseClick(clock, point.x, point.y)
+        moveAway(clock)
+        compare(blockDetailsModelMock.selection, null)
+        compare(dial.highlightedBlock, -1)
+
+        // Or a block arrives, which can move the arcs.
+        mouseClick(clock, point.x, point.y)
+        moveAway(clock)
+        compare(dial.highlightedBlock, 0)
+        blockClockModelMock.blockTimeFractions = [0.05, 0.15, 0.1501, 0.4]
+        compare(dial.highlightedBlock, -1)
+        compare(blockDetailsModelMock.selection, null)
+
+        // Or the clock is hidden.
+        mouseClick(clock, point.x, point.y)
+        moveAway(clock)
+        compare(dial.highlightedBlock, 0)
+        clock.renderingActive = false
+        compare(dial.highlightedBlock, -1)
+    }
+
+    function test_pointing_needs_blocks_and_block_time() {
+        resetMocks()
+        setUpPastBlocks()
+        const clock = createClock()
+        waitForArcs(clock)
+
+        // The arc of the block being built is described already.
+        const newest = ringPoint(clock, 0.3)
+        mouseMove(clock, newest.x, newest.y)
+        compare(blockDetailsModelMock.selection, null)
+        compare(findChild(clock, "blockClockDial").highlightedBlock, -1)
+
+        nodeModelMock.initialSyncComplete = false
+        nodeModelMock.verificationProgress = 0.5
+        compare(clock.state, "IBD")
+        verify(!findChild(clock, "blockClockPointer").enabled)
+        const point = ringPoint(clock, 0.03)
+        mouseMove(clock, point.x, point.y)
+        compare(blockDetailsModelMock.selection, null)
     }
 
     function test_core_ibd_state_overrides_rounded_verification_completion() {

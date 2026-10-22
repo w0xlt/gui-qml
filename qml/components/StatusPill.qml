@@ -15,7 +15,8 @@ Control {
     property color textColor: accentColor
     property bool showDot: true
     property real dotOpacity: 1
-    readonly property real textImplicitWidth: label.implicitWidth
+    // The implicit width besides the text's.
+    readonly property real decorationWidth: leftPadding + rightPadding + (showDot ? dot.width + contentItem.spacing : 0)
 
     leftPadding: 12
     rightPadding: 12
@@ -32,6 +33,7 @@ Control {
     contentItem: RowLayout {
         spacing: root.showDot ? 7 : 0
         Rectangle {
+            id: dot
             visible: root.showDot
             width: root.showDot ? 6 : 0
             height: root.showDot ? 6 : 0
