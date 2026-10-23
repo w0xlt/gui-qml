@@ -630,6 +630,81 @@ TestCase {
         compare(blockDetailsModelMock.selection, null)
     }
 
+    function test_found_block_rises_into_the_height() {
+        resetMocks()
+        setUpBuildingBlock()
+        const clock = createClock({ parentWidth: 2400, parentHeight: 2400 })
+        const dial = findChild(clock, "blockClockDial")
+        const newest = findChild(clock, "blockClockNewestBlock")
+        const pill = findChild(clock, "blockClockBuildingBlock")
+
+        nodeModelMock.blockTipHeight = 123457
+        verify(clock.announcingFoundBlock)
+        compare(clock.header, formatCount(123456))
+        compare(clock.subText, "Block " + formatCount(123457) + " found")
+        verify(pill.visible)
+        compare(pill.text, formatCount(123457))
+        // The recent blocks keep their colors until the wave passes them.
+        compare(dial.confirmationWave, 0)
+        compare(newest.confirmationWave, 0)
+        // The newest arc is painted apart, with the flash, even before the
+        // template builds on the new block.
+        verify(newest.visible)
+        compare(dial.blockLayer, BlockClockDial.SettledBlocks)
+        tryVerify(() => newest.foundFlash > 0.5)
+
+        // Once it does, its header has been read.
+        buildingBlockModelMock.height = 123458
+        buildingBlockModelMock.tipTransactionCount = 2341
+        buildingBlockModelMock.tipTime = Date.now()
+        compare(pill.text, formatCount(123457) + " · " + formatCount(2341) + " tx")
+
+        tryVerify(() => clock.header === formatCount(123457))
+        tryVerify(() => dial.confirmationWave > 0.2)
+        tryVerify(() => !clock.announcingFoundBlock)
+        compare(clock.subText, "just now · " + formatCount(2341) + " tx")
+        compare(pill.text.indexOf("Building " + formatCount(123458)), 0)
+        tryVerify(() => dial.confirmationWave === -1, 3000)
+        compare(newest.confirmationWave, -1)
+        compare(newest.foundFlash, 0)
+        compare(pill.opacity, 1)
+        compare(findChild(clock, "blockClockHeader").opacity, 1)
+    }
+
+    function test_found_block_needs_a_presented_block_clock() {
+        resetMocks()
+        setUpBuildingBlock()
+        const clock = createClock()
+
+        // Not for a reorganization.
+        nodeModelMock.blockTipHeight = 123455
+        verify(!clock.announcingFoundBlock)
+        compare(clock.confirmationWave, -1)
+
+        // Nor while the clock is hidden.
+        clock.renderingActive = false
+        nodeModelMock.blockTipHeight = 123456
+        verify(!clock.announcingFoundBlock)
+
+        // Hiding the clock ends it.
+        clock.renderingActive = true
+        nodeModelMock.blockTipHeight = 123457
+        verify(clock.announcingFoundBlock)
+        clock.renderingActive = false
+        verify(!clock.announcingFoundBlock)
+        compare(clock.confirmationWave, -1)
+        compare(clock.foundFlash, 0)
+        compare(clock.header, formatCount(123457))
+
+        // Nor while the node syncs.
+        clock.renderingActive = true
+        nodeModelMock.initialSyncComplete = false
+        nodeModelMock.verificationProgress = 0.5
+        compare(clock.state, "IBD")
+        nodeModelMock.blockTipHeight = 123458
+        verify(!clock.announcingFoundBlock)
+    }
+
     function test_core_ibd_state_overrides_rounded_verification_completion() {
         resetMocks()
         nodeModelMock.numPeers = 1

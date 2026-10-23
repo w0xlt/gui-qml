@@ -12,6 +12,8 @@
 #include <QTimer>
 #include <QtGlobal>
 
+#include <optional>
+
 /**
  * Paints the current twelve-hour block timeline clockwise from midnight or noon.
  *
@@ -24,7 +26,9 @@
  * with blockAt(), e.g. to show its details while its segment is highlighted.
  *
  * The block being built can be painted by a second dial on top, so it can be
- * animated without repainting the others.
+ * animated without repainting the others. That dial also paints the light of
+ * a block being found: a flash where it ends, and a wave that runs back over
+ * the blocks whose color its confirmation changes.
  */
 class BlockClockDial : public QQuickPaintedItem
 {
@@ -60,6 +64,14 @@ class BlockClockDial : public QQuickPaintedItem
      * dimming the others, or -1.
      */
     Q_PROPERTY(int highlightedBlock READ highlightedBlock WRITE setHighlightedBlock)
+    /** Strength in [0, 1] of the flash at the newest block. */
+    Q_PROPERTY(qreal foundFlash READ foundFlash WRITE setFoundFlash)
+    /**
+     * Progress in [0, 1] of the confirmation wave, or -1. The blocks it
+     * hasn't reached show one confirmation fewer, as before the newest block
+     * was found.
+     */
+    Q_PROPERTY(qreal confirmationWave READ confirmationWave WRITE setConfirmationWave)
 
 public:
     enum BlockLayer {
@@ -96,6 +108,8 @@ public:
     qreal ringMargin() const { return m_ring_margin; }
     QColor headColor() const { return m_head_color; }
     int highlightedBlock() const { return m_highlighted_block; }
+    qreal foundFlash() const { return m_found_flash; }
+    qreal confirmationWave() const { return m_confirmation_wave; }
 
     /**
      * Index in blockTimeFractions of the block whose segment is painted at the
@@ -125,6 +139,8 @@ public Q_SLOTS:
     void setRingMargin(qreal margin);
     void setHeadColor(QColor color);
     void setHighlightedBlock(int block);
+    void setFoundFlash(qreal flash);
+    void setConfirmationWave(qreal progress);
 
 Q_SIGNALS:
     void scaleChanged();
@@ -150,6 +166,9 @@ private:
     void paintSyncedGradientArc(QPainter* painter);
     void paintBlocks(QPainter * painter);
     void paintNewestBlockHead(QPainter* painter, const QRectF& bounds, qreal angle, const QColor& color);
+    void paintBlockFoundLight(QPainter* painter, const QRectF& bounds, const QList<BlockSegment>& segments,
+                              std::optional<qreal> wave_front);
+    void paintGlow(QPainter* painter, const QPointF& center, qreal radius, const QColor& color);
     void paintBackground(QPainter * painter);
     void paintTimeTicks(QPainter * painter);
     QRectF getBoundsForPen(const QPen & pen) const;
@@ -157,6 +176,7 @@ private:
     qreal degreesForArcPixels(qreal pixels, const QRectF& bounds) const;
     qreal blockSegmentGapPixels() const;
     QList<BlockSegment> blockSegments(const QRectF& bounds) const;
+    std::optional<qreal> confirmationWaveFront(const QList<BlockSegment>& segments) const;
     void setupConnectingGradient(const QPen & pen);
     void setupSyncedGradient(const QRectF& bounds);
     void invalidateSyncedGradient();
@@ -197,6 +217,8 @@ private:
     qreal m_ring_margin{0};
     QColor m_head_color;
     int m_highlighted_block{-1};
+    qreal m_found_flash{0};
+    qreal m_confirmation_wave{-1};
     QTimer m_animation_timer;
     QTimer m_delay_timer;
     QMetaObject::Connection m_window_visibility_connection;

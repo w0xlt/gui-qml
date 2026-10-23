@@ -145,6 +145,8 @@ private Q_SLOTS:
     void blockAtFindsTheBlockOfASegment();
     void blockAtFindsRecentAndFutureBlocks();
     void highlightedBlockDimsTheOtherSegments();
+    void confirmationWaveShowsEarlierColorsUntilItPasses();
+    void newestBlockLayerPaintsTheFoundBlockLight();
 };
 
 void BlockClockDialTests::ibdProgressRendersImmediateHalfArc()
@@ -600,6 +602,68 @@ void BlockClockDialTests::highlightedBlockDimsTheOtherSegments()
     const QImage plain{RenderDial(dial)};
     VerifyDialColor(plain, 0.125, CONFIRMATION_COLORS[2]);
     VerifyDialColor(plain, 0.625, CONFIRMATION_COLORS[0]);
+}
+
+void BlockClockDialTests::confirmationWaveShowsEarlierColorsUntilItPasses()
+{
+    BlockClockDial dial;
+    ConfigureSyncedDial(dial, 0.90, {0.15, 0.30, 0.45, 0.60, 0.75});
+
+    // Before it leaves the newest block, each block shows the color it had
+    // before that block was found.
+    dial.setConfirmationWave(0.0);
+    QImage image{RenderDial(dial)};
+    for (int i{0}; i < 5; ++i) {
+        VerifyDialColor(image, 0.075 + 0.15 * i, CONFIRMATION_COLORS[4 - i]);
+    }
+    VerifyDialColor(image, 0.825, CONFIRMATION_COLORS[0]);
+
+    // It runs back from the newest block to the start of the fifth newest.
+    dial.setConfirmationWave(0.5);
+    image = RenderDial(dial);
+    VerifyDialColor(image, 0.225, CONFIRMATION_COLORS[3]);
+    VerifyDialColor(image, 0.525, CONFIRMATION_COLORS[2]);
+
+    for (const qreal wave : {1.0, -1.0}) {
+        dial.setConfirmationWave(wave);
+        image = RenderDial(dial);
+        for (int i{0}; i < 6; ++i) {
+            VerifyDialColor(image, 0.075 + 0.15 * i, CONFIRMATION_COLORS[5 - i]);
+        }
+    }
+}
+
+void BlockClockDialTests::newestBlockLayerPaintsTheFoundBlockLight()
+{
+    constexpr int margin{30};
+    const auto render{[](BlockClockDial& dial) {
+        QImage image{DIAL_SIZE + 2 * margin, DIAL_SIZE + 2 * margin, QImage::Format_ARGB32_Premultiplied};
+        image.fill(Qt::transparent);
+        QPainter painter{&image};
+        dial.paint(&painter);
+        return image;
+    }};
+    const QPoint offset{margin, margin};
+    BlockClockDial dial;
+    ConfigureSyncedDial(dial, 0.90, {0.25, 0.50, 0.75});
+    dial.setBlockLayer(BlockClockDial::NewestBlock);
+    dial.setHeadColor(Qt::white);
+    dial.setRingMargin(margin);
+    dial.setWidth(DIAL_SIZE + 2 * margin);
+    dial.setHeight(DIAL_SIZE + 2 * margin);
+    QCOMPARE(render(dial).pixelColor(DialPoint(0.75) + offset).alpha(), 0);
+
+    // A flash where the newest block ends and the block being built begins.
+    dial.setFoundFlash(1.0);
+    QVERIFY(ColorDistance(render(dial).pixelColor(DialPoint(0.75) + offset), Qt::white) < 10);
+    dial.setFoundFlash(0.0);
+
+    // A light at the front of the confirmation wave, halfway back to the
+    // start of the oldest block.
+    dial.setConfirmationWave(0.5);
+    const QImage image{render(dial)};
+    QVERIFY(image.pixelColor(DialPoint(0.375) + offset).alpha() > 100);
+    QCOMPARE(image.pixelColor(DialPoint(0.125) + offset).alpha(), 0);
 }
 
 #ifdef BITCOINQML_NO_TEST_MAIN

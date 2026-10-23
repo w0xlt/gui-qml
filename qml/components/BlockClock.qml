@@ -68,9 +68,15 @@ Item {
         root.buildingBlockModelRef !== null && root.buildingBlockModelRef.available &&
         root.buildingBlockModelRef.height === root.nodeModelRef.blockTipHeight + 1
     readonly property bool wantsBuildingBlock: root.state === "BLOCKCLOCK" && root.presentationActive
-    readonly property bool showsBlockDetails: root.showsBuildingBlock || root.showsPointedBlock
+    readonly property bool showsBlockDetails: root.showsBuildingBlock || root.showsPointedBlock || blockFound.running
+    // The block being built is painted over the others, also while a found
+    // block's light runs.
+    readonly property bool layersNewestBlock: root.showsBuildingBlock || blockFound.running
     onWantsBuildingBlockChanged: root.updateBuildingBlockViewer()
-    Component.onCompleted: root.updateBuildingBlockViewer()
+    Component.onCompleted: {
+        root.updateBuildingBlockViewer()
+        root.lastTipHeight = root.tipHeight
+    }
 
     // Breathes every two seconds. Stepping it 20 times a second, rather than
     // every frame, renders a third of the frames for a pulse this slow.
@@ -79,7 +85,7 @@ Item {
     Timer {
         interval: 50
         repeat: true
-        running: root.showsBuildingBlock && root.presentationActive
+        running: root.showsBuildingBlock && root.presentationActive && !blockFound.running
         onTriggered: root.buildingPulse = 0.5 + 0.5 * Math.cos(2 * Math.PI * (Date.now() % 2000) / 2000)
         onRunningChanged: if (!running) root.buildingPulse = 1
     }
@@ -104,7 +110,63 @@ Item {
     onPointedBlockChanged: root.updatePointedBlock()
     // Indexes change with the blocks.
     onBlockTimeFractionsChanged: root.forgetPointedBlock()
-    onPresentationActiveChanged: if (!root.presentationActive) root.forgetPointedBlock()
+    onPresentationActiveChanged: {
+        if (root.presentationActive) return
+        root.forgetPointedBlock()
+        root.finishBlockFound()
+    }
+    onStateChanged: if (root.state !== "BLOCKCLOCK") root.finishBlockFound()
+
+    // When a block is found, the newest arc flashes where the block ends, the
+    // building pill rises into the height, and a wave runs back over the recent
+    // blocks as each gains a confirmation.
+    readonly property int tipHeight: root.nodeModelRef !== null ? root.nodeModelRef.blockTipHeight : 0
+    property int lastTipHeight: 0
+    property int previousTipHeight: 0
+    property bool announcingFoundBlock: false
+    property real foundFlash: 0
+    property real foundLift: 0
+    property real foundRoll: 1
+    property real foundSettle: 1
+    property real confirmationWave: -1
+    onTipHeightChanged: {
+        if (root.state === "BLOCKCLOCK" && root.presentationActive &&
+            root.lastTipHeight > 0 && root.tipHeight > root.lastTipHeight) {
+            root.previousTipHeight = root.lastTipHeight
+            root.announcingFoundBlock = true
+            root.foundLift = 0
+            root.foundRoll = 0
+            root.foundSettle = 0
+            root.confirmationWave = 0
+            blockFound.restart()
+        }
+        root.lastTipHeight = root.tipHeight
+    }
+    ParallelAnimation {
+        id: blockFound
+        SequentialAnimation {
+            NumberAnimation { target: root; property: "foundFlash"; from: 0; to: 1; duration: 250; easing.type: Easing.OutQuad }
+            NumberAnimation { target: root; property: "foundFlash"; to: 0; duration: 750; easing.type: Easing.InQuad }
+        }
+        // The pill rises and fades, then the latest block and the next pill
+        // fade in.
+        SequentialAnimation {
+            PauseAnimation { duration: 700 }
+            NumberAnimation { target: root; property: "foundLift"; to: 1; duration: 550; easing.type: Easing.InOutQuad }
+            PropertyAction { target: root; property: "announcingFoundBlock"; value: false }
+            NumberAnimation { target: root; property: "foundSettle"; to: 1; duration: 900 }
+        }
+        // The height rolls to the new block.
+        SequentialAnimation {
+            PauseAnimation { duration: 750 }
+            NumberAnimation { target: root; property: "foundRoll"; to: 1; duration: 500; easing.type: Easing.InOutQuad }
+        }
+        SequentialAnimation {
+            PauseAnimation { duration: 800 }
+            NumberAnimation { target: root; property: "confirmationWave"; to: 1; duration: 1400; easing.type: Easing.InOutSine }
+            PropertyAction { target: root; property: "confirmationWave"; value: -1 }
+        }
+    }
 
     readonly property string latestBlockText: root.showsBuildingBlock && root.buildingBlockModelRef.tipTransactionCount >= 0
         ? qsTr("%1 · %2 tx")
@@ -136,8 +198,9 @@ Item {
         timeTickColor: Theme.color.neutral5
         confirmationColors: Theme.color.confirmationColors
         renderingActive: root.presentationActive
-        blockLayer: root.showsBuildingBlock ? BlockClockDial.SettledBlocks : BlockClockDial.AllBlocks
+        blockLayer: root.layersNewestBlock ? BlockClockDial.SettledBlocks : BlockClockDial.AllBlocks
         highlightedBlock: root.pointedBlock
+        confirmationWave: root.confirmationWave
 
         Behavior on backgroundColor {
             ColorAnimation { duration: 150 }
@@ -158,7 +221,7 @@ Item {
         id: newestBlock
         objectName: "blockClockNewestBlock"
         anchors.centerIn: dial
-        visible: root.showsBuildingBlock
+        visible: root.layersNewestBlock
         blockLayer: BlockClockDial.NewestBlock
         // Room for the glow at the end of the segment.
         readonly property int glowMargin: Math.ceil(root.dialPenWidth * 3)
@@ -176,7 +239,9 @@ Item {
         confirmationColors: Theme.color.confirmationColors
         headColor: Theme.color.white
         highlightedBlock: root.pointedBlock
-        renderingActive: root.presentationActive && root.showsBuildingBlock
+        confirmationWave: root.confirmationWave
+        foundFlash: root.foundFlash
+        renderingActive: root.presentationActive && root.layersNewestBlock
         opacity: root.buildingPulseOpacity
     }
 
@@ -213,6 +278,11 @@ Item {
         font.styleName: "Semi Bold"
         font.pixelSize: dial.width * (4/25)
         color: Theme.color.neutral9
+        // The previous height leaves upwards and the new one arrives from below.
+        opacity: blockFound.running ? Math.abs(1 - 2 * root.foundRoll) : 1
+        transform: Translate {
+            y: blockFound.running ? (root.foundRoll < 0.5 ? -root.foundRoll : 1 - root.foundRoll) * dial.width * 0.06 : 0
+        }
 
         Behavior on color {
             ColorAnimation { duration: 150 }
@@ -246,6 +316,9 @@ Item {
             : subText.desiredPixelSize
         elide: Text.ElideRight
         color: root.showsBlockDetails ? Theme.color.neutral6 : Theme.color.neutral4
+        // Out of the way of the rising pill.
+        opacity: !blockFound.running ? 1
+            : root.announcingFoundBlock ? 1 - Math.min(1, root.foundLift * 2.5) : Math.min(1, root.foundSettle * 3)
 
         Behavior on color {
             enabled: !subText.estimating
@@ -309,12 +382,21 @@ Item {
             readonly property string mediumText: root.buildingBlockText(true, false)
             readonly property string shortText: root.buildingBlockText(false, false)
             anchors.horizontalCenter: parent.horizontalCenter
-            visible: root.showsBuildingBlock && !root.showsPointedBlock && shortTextMetrics.advanceWidth <= textRoom
-            text: fullTextMetrics.advanceWidth <= textRoom ? fullText
+            // A found block's pill rises into the height.
+            visible: root.announcingFoundBlock ? implicitWidth <= dial.width * (4/5)
+                : root.showsBuildingBlock && !root.showsPointedBlock && shortTextMetrics.advanceWidth <= textRoom
+            text: root.announcingFoundBlock ? root.foundBlockText()
+                : fullTextMetrics.advanceWidth <= textRoom ? fullText
                 : mediumTextMetrics.advanceWidth <= textRoom ? mediumText : shortText
-            accentColor: Theme.color.confirmationColors[0]
-            textColor: Theme.color.neutral8
-            dotOpacity: root.buildingPulseOpacity
+            accentColor: root.announcingFoundBlock ? Theme.color.neutral9 : Theme.color.confirmationColors[0]
+            textColor: root.announcingFoundBlock ? Theme.color.neutral9 : Theme.color.neutral8
+            dotOpacity: root.announcingFoundBlock ? 1 : root.buildingPulseOpacity
+            opacity: root.announcingFoundBlock ? 1 - root.foundLift
+                : blockFound.running ? Math.max(0, (root.foundSettle - 1/3) * 1.5) : 1
+            transform: Translate {
+                y: root.announcingFoundBlock ? -root.foundLift * (blockDetails.y + buildingBlockPill.y
+                    + buildingBlockPill.height / 2 - mainText.y - mainText.height / 2) : 0
+            }
 
             TextMetrics {
                 id: fullTextMetrics
@@ -374,8 +456,9 @@ Item {
             PropertyChanges {
                 target: root
                 header: root.formatCount(root.showsPointedBlock ? root.blockDetailsModelRef.height
-                    : root.nodeModelRef !== null ? root.nodeModelRef.blockTipHeight : 0)
+                    : blockFound.running && root.foundRoll < 0.5 ? root.previousTipHeight : root.tipHeight)
                 subText: root.showsPointedBlock ? root.pointedBlockMinedText()
+                    : root.announcingFoundBlock ? qsTr("Block %1 found").arg(root.formatCount(root.tipHeight))
                     : root.latestBlockText !== "" ? root.latestBlockText : "Blocktime"
                 estimating: false
             }
@@ -480,6 +563,22 @@ Item {
 
     function formatCount(count) {
         return Number(count).toLocaleString(Qt.locale(), 'f', 0)
+    }
+
+    function finishBlockFound() {
+        blockFound.stop()
+        root.announcingFoundBlock = false
+        root.foundFlash = 0
+        root.foundRoll = 1
+        root.foundSettle = 1
+        root.confirmationWave = -1
+    }
+
+    function foundBlockText() {
+        const height = root.formatCount(root.tipHeight)
+        // Once the template builds on it, its header has been read.
+        if (!root.showsBuildingBlock || root.buildingBlockModelRef.tipTransactionCount < 0) return height
+        return qsTr("%1 · %2 tx").arg(height).arg(root.formatCount(root.buildingBlockModelRef.tipTransactionCount))
     }
 
     function pointedBlockMinedText() {

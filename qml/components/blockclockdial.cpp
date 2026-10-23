@@ -403,6 +403,22 @@ void BlockClockDial::setHighlightedBlock(int block)
     requestRepaint();
 }
 
+void BlockClockDial::setFoundFlash(qreal flash)
+{
+    flash = qBound<qreal>(0.0, flash, 1.0);
+    if (qFuzzyCompare(m_found_flash + 1.0, flash + 1.0)) return;
+    m_found_flash = flash;
+    requestRepaint();
+}
+
+void BlockClockDial::setConfirmationWave(qreal progress)
+{
+    progress = progress < 0.0 ? -1.0 : qMin<qreal>(1.0, progress);
+    if (qFuzzyCompare(m_confirmation_wave + 2.0, progress + 2.0)) return;
+    m_confirmation_wave = progress;
+    requestRepaint();
+}
+
 int BlockClockDial::blockAt(qreal x, qreal y) const
 {
     if (paused() || !connected() || !synced() || !showBlockSegments()) return -1;
@@ -468,6 +484,7 @@ void BlockClockDial::paintBlocks(QPainter * painter)
         degreesForArcPixels(m_pen_width + blockSegmentGapPixels(), bounds)};
     const qreal half_boundary_gap{boundary_gap_degrees / 2.0};
     const qreal animated_fraction{qBound<qreal>(0.0, m_animating_max_angle / 360.0, 1.0)};
+    const std::optional<qreal> wave_front{confirmationWaveFront(segments)};
     for (qsizetype i{0}; i < segments.size(); ++i) {
         const BlockSegment& segment{segments.at(i)};
         const bool newest{i == segments.size() - 1};
@@ -484,7 +501,11 @@ void BlockClockDial::paintBlocks(QPainter * painter)
             continue;
         }
 
-        const QColor& color{m_confirmation_colors.at(qMin<qsizetype>(5, segment.confirmations))};
+        qsizetype confirmations{segment.confirmations};
+        if (wave_front && segment.block >= 0 && (segment.start_fraction + segment.end_fraction) / 2.0 < *wave_front) {
+            --confirmations;
+        }
+        const QColor& color{m_confirmation_colors.at(qMin<qsizetype>(5, confirmations))};
         pen.setColor(color);
         painter->setPen(pen);
 
@@ -502,6 +523,49 @@ void BlockClockDial::paintBlocks(QPainter * painter)
         if (segment.end_fraction > animated_fraction) break;
     }
     painter->setOpacity(1.0);
+    if (m_block_layer == NewestBlock) paintBlockFoundLight(painter, bounds, segments, wave_front);
+}
+
+void BlockClockDial::paintBlockFoundLight(QPainter* painter, const QRectF& bounds, const QList<BlockSegment>& segments,
+                                         std::optional<qreal> wave_front)
+{
+    if (segments.size() < 2) return;
+    const auto point{[&](qreal fraction) {
+        const qreal radians{qDegreesToRadians(90 - 360 * fraction)};
+        return bounds.center() + QPointF{std::cos(radians) * bounds.width(), -std::sin(radians) * bounds.height()} / 2.0;
+    }};
+    if (m_found_flash > 0.0) {
+        // Where the newest block ends and the block being built begins.
+        const QPointF found{point(segments.constLast().start_fraction)};
+        QColor glow_color{m_confirmation_colors.at(1).lighter(130)};
+        glow_color.setAlphaF(0.9 * m_found_flash);
+        paintGlow(painter, found, m_pen_width * 3.2, glow_color);
+        if (m_head_color.isValid()) {
+            QColor core{m_head_color};
+            core.setAlphaF(m_found_flash);
+            painter->setBrush(core);
+            painter->drawEllipse(found, m_pen_width * 0.6, m_pen_width * 0.6);
+        }
+    }
+    if (wave_front) {
+        // Fades in as it leaves the newest block, and out as it arrives.
+        const qreal strength{qMin<qreal>(1.0, qMin(m_confirmation_wave / 0.15, (1.0 - m_confirmation_wave) / 0.25))};
+        QColor glow_color{m_confirmation_colors.at(5)};
+        glow_color.setAlphaF(0.85 * strength);
+        paintGlow(painter, point(*wave_front), m_pen_width * 2.2, glow_color);
+    }
+}
+
+void BlockClockDial::paintGlow(QPainter* painter, const QPointF& center, qreal radius, const QColor& color)
+{
+    QColor transparent{color};
+    transparent.setAlphaF(0.0);
+    QRadialGradient glow{center, radius};
+    glow.setColorAt(0.0, color);
+    glow.setColorAt(1.0, transparent);
+    painter->setPen(Qt::NoPen);
+    painter->setBrush(glow);
+    painter->drawEllipse(center, radius, radius);
 }
 
 void BlockClockDial::paintNewestBlockHead(QPainter* painter, const QRectF& bounds, qreal angle, const QColor& color)
@@ -511,16 +575,9 @@ void BlockClockDial::paintNewestBlockHead(QPainter* painter, const QRectF& bound
                        QPointF{std::cos(radians) * bounds.width(), -std::sin(radians) * bounds.height()} / 2.0};
 
     // The glow reaches past the ring, into ringMargin.
-    const qreal glow_radius{m_pen_width * 2.6};
     QColor glow_color{color};
     glow_color.setAlphaF(0.55);
-    QRadialGradient glow{head, glow_radius};
-    glow.setColorAt(0.0, glow_color);
-    glow_color.setAlphaF(0.0);
-    glow.setColorAt(1.0, glow_color);
-    painter->setPen(Qt::NoPen);
-    painter->setBrush(glow);
-    painter->drawEllipse(head, glow_radius, glow_radius);
+    paintGlow(painter, head, m_pen_width * 2.6, glow_color);
 
     if (m_head_color.isValid()) {
         painter->setBrush(m_head_color);
@@ -635,6 +692,16 @@ qreal BlockClockDial::blockSegmentGapPixels() const
     // The Figma dial uses a gap around half the stroke width, with one device
     // pixel as the lower bound for small miniatures.
     return qMax<qreal>(1.0, m_pen_width / 2.0);
+}
+
+std::optional<qreal> BlockClockDial::confirmationWaveFront(const QList<BlockSegment>& segments) const
+{
+    if (m_confirmation_wave < 0.0 || segments.size() < 2) return std::nullopt;
+    // From the end of the newest block back to the start of the fifth newest,
+    // as older blocks keep the color of five confirmations.
+    const qreal from{segments.at(segments.size() - 2).end_fraction};
+    const qreal to{segments.at(qMax<qsizetype>(0, segments.size() - 6)).start_fraction};
+    return from + (to - from) * m_confirmation_wave;
 }
 
 QList<BlockClockDial::BlockSegment> BlockClockDial::blockSegments(const QRectF& bounds) const
